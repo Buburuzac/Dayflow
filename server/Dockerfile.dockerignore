@@ -1,0 +1,8 @@
+# Build context is the repository root; only the server and the shared contract are needed.
+*
+!server
+!windows/src/shared/sync-types.ts
+**/node_modules
+**/dist
+**/.env
+**/.git

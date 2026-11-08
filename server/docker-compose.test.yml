@@ -1,0 +1,26 @@
+# Throwaway test run against a real Postgres (nothing published, data on tmpfs):
+#   docker compose -p dayflow-e2e -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from tests
+#   docker compose -p dayflow-e2e -f docker-compose.test.yml down -v --rmi local
+services:
+  test-postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: postgres
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  tests:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+      target: test
+    environment:
+      TEST_DATABASE_URL: postgres://postgres:postgres@test-postgres:5432/postgres
+    depends_on:
+      test-postgres:
+        condition: service_healthy

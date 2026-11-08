@@ -1,0 +1,17 @@
+# Temporary end-to-end stack (DEV_AUTH=1, port on 127.0.0.1 only, own volume). Use with docker-compose.yml:
+#   docker compose -p dayflow-e2e --env-file e2e.env -f docker-compose.yml -f docker-compose.e2e.yml up --build ...
+# `server/deploy.sh e2e` runs it and tears it down (down -v) afterwards.
+services:
+  e2e-runner:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+      target: test
+    command: ["node", "--import", "tsx", "test/e2e/run.ts"]
+    environment:
+      BASE_URL: http://dayflow-server:8790
+      MOCK_ODOO_HOST: 0.0.0.0
+      MOCK_ODOO_PUBLIC_URL: http://e2e-runner:8069
+    depends_on:
+      dayflow-server:
+        condition: service_healthy

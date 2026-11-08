@@ -1,0 +1,51 @@
+# Dayflow Sync Server. Production: compose project `dayflow`, see deploy.sh and README.md.
+#   docker compose -p dayflow --env-file /srv/dayflow/.env -f docker-compose.yml up -d --build
+# Variables used here (from --env-file): POSTGRES_PASSWORD, DAYFLOW_ENV_FILE, DAYFLOW_BIND, DAYFLOW_PORT.
+services:
+  dayflow-postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dayflow
+      POSTGRES_USER: dayflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - pg:/var/lib/postgresql/data
+    # not published on the host: reachable only on the project network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dayflow -d dayflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: &logging
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  dayflow-server:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: ${DAYFLOW_IMAGE:-dayflow-server:latest}
+    restart: unless-stopped
+    env_file:
+      - ${DAYFLOW_ENV_FILE:-.env}
+    environment:
+      PORT: "8790"
+      HOST: 0.0.0.0
+      WEB_DIST: /app/web/dist
+    depends_on:
+      dayflow-postgres:
+        condition: service_healthy
+    ports:
+      - "${DAYFLOW_BIND:-0.0.0.0}:${DAYFLOW_PORT:-8790}:8790"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *logging
+
+volumes:
+  pg:
