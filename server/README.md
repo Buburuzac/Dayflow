@@ -132,7 +132,7 @@ creates a new one if it was deleted in Odoo). Nothing is written to Odoo except 
 | `PUBLIC_URL` | external base URL, used in web-link and invite URLs (`http://192.168.0.90:8790`) |
 | `JWT_SECRET` | ≥ 32 chars; signs session cookies and derives the Odoo-key encryption key. Changing it logs out web sessions and makes stored Odoo keys unreadable (re-enter them) |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | OAuth client of type **Desktop app** (below) |
-| `ALLOWED_EMAIL_DOMAINS` | optional comma list, e.g. `velesagro.pl`; empty = any verified Google account may sign in (it sees nothing until invited) |
+| `ALLOWED_EMAIL_DOMAINS` | optional comma list of domains and/or exact addresses, e.g. `velesagro.pl,someone@gmail.com`; empty = any verified Google account may sign in (it sees nothing until invited). Addresses in `BOOTSTRAP_ADMIN_EMAILS` are always allowed |
 | `BOOTSTRAP_ADMIN_EMAILS` | comma list; these users become owners of the default workspace on sign-in |
 | `DEV_AUTH` | `1` enables `/api/auth/dev` (tests only). `deploy.sh` refuses to deploy with `DEV_AUTH=1` |
 | `ODOO_URL`, `ODOO_DB`, `ODOO_LOGIN`, `ODOO_API_KEY` | optional defaults used by workspaces without their own connection |

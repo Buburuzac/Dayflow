@@ -12,11 +12,19 @@ export const SESSION_TTL_S = 12 * 3600
 
 const secretKey = (ctx: Ctx) => new TextEncoder().encode(ctx.config.JWT_SECRET)
 
+/**
+ * ALLOWED_EMAIL_DOMAINS entries are domains (`velesagro.pl`) or exact addresses (`someone@gmail.com`).
+ * Bootstrap admins are always allowed, so an owner may use an address outside the company domain
+ * without opening sign-in to the whole of that domain.
+ */
 export function emailAllowed(ctx: Ctx, email: string): boolean {
-  const domains = ctx.config.ALLOWED_EMAIL_DOMAINS
-  if (domains.length === 0) return true
-  const d = email.split('@')[1]?.toLowerCase() ?? ''
-  return domains.includes(d)
+  const allowed = ctx.config.ALLOWED_EMAIL_DOMAINS.map((x) => x.toLowerCase())
+  if (allowed.length === 0) return true
+  const e = email.toLowerCase()
+  if (ctx.config.BOOTSTRAP_ADMIN_EMAILS.map((x) => x.toLowerCase()).includes(e)) return true
+  if (allowed.includes(e)) return true
+  const d = e.split('@')[1] ?? ''
+  return allowed.includes(d)
 }
 
 export function userInfo(r: { id: string; email: string; name: string; avatar_url: string | null }): UserInfo {
