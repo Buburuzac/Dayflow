@@ -252,7 +252,11 @@ function updateTray(): void {
 
 function applyLoginItem(s: Settings): void {
   if (!app.isPackaged) return
-  app.setLoginItemSettings({ openAtLogin: s.launchAtLogin, args: ['--hidden'] })
+  // Only an installed copy may register itself to start with Windows. A build run straight from
+  // electron-builder's `win-unpacked` folder would otherwise autostart from the build directory,
+  // keep its files locked and break the next build.
+  const fromBuildDir = /[\\/]win-unpacked[\\/]/i.test(process.execPath)
+  app.setLoginItemSettings({ openAtLogin: s.launchAtLogin && !fromBuildDir, args: ['--hidden'] })
 }
 
 function registerIpc(): void {

@@ -34,7 +34,7 @@
     "appId": "so.dayflow.windows",
     "productName": "Dayflow",
     "directories": {
-      "output": "dist",
+      "output": "../../dayflow-build",
       "buildResources": "resources"
     },
     "files": [
