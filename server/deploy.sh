@@ -157,7 +157,7 @@ DIR=$1 PROJECT=$2
 mkdir -p "$DIR/backups" && chmod 700 "$DIR/backups"
 OUT="$DIR/backups/dayflow-$(date +%Y%m%d-%H%M%S).dump"
 sudo docker compose -p "$PROJECT" --env-file "$DIR/.env" -f "$DIR/src/server/docker-compose.yml" \
-  exec -T dayflow-postgres pg_dump -U dayflow -d dayflow -Fc > "$OUT"
+  exec -T dayflow-postgres pg_dump -U dayflow -d dayflow -Fc > "$OUT" </dev/null # exec reads stdin: keep the rest of this script
 chmod 600 "$OUT"
 ls -l "$OUT"
 REMOTE
