@@ -5,7 +5,7 @@
 - **Часть 1** — функциональное описание: что умеет система с точки зрения пользователя.
 - **Часть 2** — техническая реализация на стороне сервера.
 
-Сервер: `http://192.168.0.90:8790` (megaserv, Docker, compose-проект `dayflow`). Контракт API: `docs/sync-server-design.md`.
+Сервер: `http://192.168.0.90:8790` (megaserv, Docker, compose-проект `dayflow`). Контракт API: `docs/sync-server-design.md`. Настройка связи клиентов с сервером: `docs/sync-setup.md`.
 
 ---
 
