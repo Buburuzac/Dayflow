@@ -304,19 +304,45 @@ export function SettingsView({
       <section className="panel">
         <h2>Sync & team</h2>
         <SyncSettingsPanel />
+        <SyncPrivacy settings={settings} onSave={(patch) => void update(patch)} />
       </section>
 
       <section className="panel">
         <h2>Categories</h2>
-        <CategoryEditor categories={settings.categories} onSave={(categories) => void update({ categories })} />
+        <CategoryEditor
+          categories={settings.categories}
+          onSave={(categories, renames) => {
+            // A renamed category keeps its "never upload" mark (Settings → Sync & team).
+            const excluded = (settings.syncExcludedCategories ?? ['Personal']).map((c) => renames.get(c.toLowerCase()) ?? c)
+            void update({ categories, syncExcludedCategories: excluded })
+          }}
+        />
       </section>
     </div>
   )
 }
 
-function CategoryEditor({ categories, onSave }: { categories: Category[]; onSave: (c: Category[]) => void }) {
+function CategoryEditor({
+  categories,
+  onSave,
+}: {
+  categories: Category[]
+  /** `renames` maps old names (lower-case) to new names for categories renamed in this edit. */
+  onSave: (c: Category[], renames: Map<string, string>) => void
+}) {
   const [list, setList] = useState(categories)
+  // Original name of each row (null for rows added here), kept index-aligned with `list`.
+  const [origins, setOrigins] = useState<(string | null)[]>(() => categories.map((c) => c.name))
   const dirty = JSON.stringify(list) !== JSON.stringify(categories)
+  const save = () => {
+    const renames = new Map<string, string>()
+    list.forEach((c, i) => {
+      const o = origins[i]
+      if (o && o !== c.name) renames.set(o.toLowerCase(), c.name)
+    })
+    onSave(list, renames)
+    setOrigins(list.map((c) => c.name))
+  }
   const patch = (i: number, p: Partial<Category>) => setList((l) => l.map((c, j) => (j === i ? { ...c, ...p } : c)))
   return (
     <div className="form">
@@ -332,7 +358,14 @@ function CategoryEditor({ categories, onSave }: { categories: Category[]; onSave
             onChange={(e) => patch(i, { description: e.target.value })}
           />
           {!c.isIdle && (
-            <button className="icon-btn small" title="Remove" onClick={() => setList((l) => l.filter((_, j) => j !== i))}>
+            <button
+              className="icon-btn small"
+              title="Remove"
+              onClick={() => {
+                setList((l) => l.filter((_, j) => j !== i))
+                setOrigins((o) => o.filter((_, j) => j !== i))
+              }}
+            >
               ✕
             </button>
           )}
@@ -343,17 +376,71 @@ function CategoryEditor({ categories, onSave }: { categories: Category[]; onSave
           className="btn ghost"
           onClick={() => {
             const idleIdx = list.findIndex((c) => c.isIdle)
+            const at = idleIdx >= 0 ? idleIdx : list.length
             const next = [...list]
-            next.splice(idleIdx >= 0 ? idleIdx : next.length, 0, { name: 'New category', color: '#7BC47F', description: '' })
+            next.splice(at, 0, { name: 'New category', color: '#7BC47F', description: '' })
+            const nextOrigins = [...origins]
+            nextOrigins.splice(at, 0, null)
             setList(next)
+            setOrigins(nextOrigins)
           }}
         >
           Add category
         </button>
-        <button className="btn" disabled={!dirty || list.some((c) => !c.name.trim())} onClick={() => onSave(list)}>
+        <button className="btn" disabled={!dirty || list.some((c) => !c.name.trim())} onClick={save}>
           Save categories
         </button>
       </div>
+    </div>
+  )
+}
+
+/** Settings → Sync & team → what may leave this PC. Filtering happens here, before upload. */
+function SyncPrivacy({ settings, onSave }: { settings: SettingsWithSecrets; onSave: (p: Partial<Settings>) => void }) {
+  const excluded = new Set((settings.syncExcludedCategories ?? ['Personal']).map((c) => c.toLowerCase()))
+  const toggleCategory = (name: string, on: boolean) => {
+    const next = settings.categories.map((c) => c.name).filter((n) => (n === name ? on : excluded.has(n.toLowerCase())))
+    onSave({ syncExcludedCategories: next })
+  }
+  return (
+    <div className="form sync-privacy">
+      <h3 className="sub">What leaves this PC</h3>
+      <p className="muted">
+        Checked before anything is uploaded. Screenshots, timelapses, the accessibility log and chat never leave this PC.
+      </p>
+      <label>Never upload cards in these categories</label>
+      <div className="row wrap">
+        {settings.categories
+          .filter((c) => !c.isIdle)
+          .map((c) => (
+            <label key={c.name} className="check">
+              <input type="checkbox" checked={excluded.has(c.name.toLowerCase())} onChange={(e) => toggleCategory(c.name, e.target.checked)} />
+              {c.name}
+            </label>
+          ))}
+      </div>
+      <small>Cards marked private are never uploaded either. Copies already on the server are wiped.</small>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={settings.syncOutOfScope ?? true}
+          onChange={(e) => onSave({ syncOutOfScope: e.target.checked })}
+        />
+        Upload work without a confirmed project as "Out of scope" (time only)
+      </label>
+      <small>
+        Only cards confirmed for a project upload with their title and details. Everything else shows on your other
+        devices and the server as an "Out of scope" block, without what it was.
+      </small>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={settings.syncObservations ?? false}
+          onChange={(e) => onSave({ syncObservations: e.target.checked })}
+        />
+        Upload observations (the AI's raw screen descriptions)
+      </label>
+      <small>Off by default. Turning it off removes the ones already uploaded from the server.</small>
     </div>
   )
 }

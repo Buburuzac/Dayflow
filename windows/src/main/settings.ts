@@ -47,6 +47,9 @@ export const DEFAULT_SETTINGS: Settings = {
   categories: DEFAULT_CATEGORIES,
   excludedApps: [],
   accessibilityCaptureEnabled: false,
+  syncExcludedCategories: ['Personal'],
+  syncOutOfScope: true,
+  syncObservations: false,
 }
 
 interface Secrets {
@@ -61,6 +64,13 @@ export class SettingsStore {
   private secrets: Secrets
   private readonly file: string
   private readonly secretsFile: string
+  private readonly listeners = new Set<(s: Settings, patch: Partial<Settings>) => void>()
+
+  /** Called after every update with the new settings and the patch that was applied. */
+  onChange(fn: (s: Settings, patch: Partial<Settings>) => void): () => void {
+    this.listeners.add(fn)
+    return () => this.listeners.delete(fn)
+  }
 
   constructor(dir: string) {
     this.file = join(dir, 'settings.json')
@@ -148,6 +158,13 @@ export class SettingsStore {
     this.settings = { ...this.settings, ...patch }
     this.writeAtomic(this.file, JSON.stringify(this.settings, null, 2))
     if (patch.categories) notifySync('user_doc', 'categories')
+    for (const fn of this.listeners) {
+      try {
+        fn(this.settings, patch)
+      } catch (err) {
+        console.error('[settings] listener failed', err)
+      }
+    }
     if (secrets && Object.keys(secrets).length > 0) {
       for (const [k, v] of Object.entries(secrets) as [keyof Secrets, string | undefined][]) {
         if (v === undefined) continue

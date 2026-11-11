@@ -125,12 +125,23 @@ export function sanitizeSettingsPatch(raw: unknown, exists: (path: string) => bo
         break
       }
       case 'launchAtLogin':
+      case 'syncOutOfScope':
+      case 'syncObservations':
       case 'accessibilityCaptureEnabled':
         out[key] = bool(key, v)
         break
       case 'categories':
         out.categories = validateCategories(v)
         break
+      case 'syncExcludedCategories': {
+        if (!Array.isArray(v) || v.length > 30) fail(key, 'expected a list of up to 30 categories')
+        out.syncExcludedCategories = v.map((c) => {
+          const n = str(key, c, 60).trim()
+          if (!n) fail(key, 'empty category name')
+          return n
+        })
+        break
+      }
       case 'excludedApps': {
         if (!Array.isArray(v) || v.length > 100) fail(key, 'expected a list of up to 100 apps')
         out.excludedApps = v.map((a) => {

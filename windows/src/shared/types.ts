@@ -38,6 +38,12 @@ export interface Settings {
   excludedApps: string[]
   /** Accessibility recorder (UI Automation text, clicks, typing). Off by default. */
   accessibilityCaptureEnabled: boolean
+  /** Sync: categories whose cards never leave this PC (case-insensitive). */
+  syncExcludedCategories: string[]
+  /** Sync: cards without a confirmed project are uploaded as time-only "Out of scope" blocks. */
+  syncOutOfScope: boolean
+  /** Sync: upload raw observations (the model's screen descriptions). */
+  syncObservations: boolean
 }
 
 export interface SettingsWithSecrets extends Settings {

@@ -2,6 +2,8 @@
 // IPC: sync:* (account, status, team, timesheets) and projects:* (list/edit, card assignment).
 // The device token lives in secrets.bin (DPAPI) as `syncDeviceToken` and never reaches the renderer.
 
+import type { Settings } from '../../shared/types.ts'
+import { DEFAULT_SYNC_POLICY, type SyncPolicy } from '../sync/scope.ts'
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { hostname } from 'node:os'
 import type { FeatureContext } from './context.ts'
@@ -40,6 +42,19 @@ export function register(ctx: FeatureContext): void {
   })
   service = svc
   syncHooks.record = (entity, id) => svc.repo.recordDoc(entity, id)
+
+  // "What leaves this PC" (Settings → Sync & team), applied before anything is uploaded.
+  const policyOf = (st: Settings): SyncPolicy => ({
+    excludedCategories: st.syncExcludedCategories ?? DEFAULT_SYNC_POLICY.excludedCategories,
+    outOfScope: st.syncOutOfScope ?? DEFAULT_SYNC_POLICY.outOfScope,
+    observations: st.syncObservations ?? DEFAULT_SYNC_POLICY.observations,
+  })
+  ctx.store.syncPolicy = policyOf(ctx.settings.get())
+  ctx.settings.onChange((st, patch) => {
+    if ('syncExcludedCategories' in patch || 'syncOutOfScope' in patch || 'syncObservations' in patch) {
+      svc.setPolicy(policyOf(st))
+    }
+  })
 
   let statusTimer: NodeJS.Timeout | null = null
   function broadcastStatus(): void {

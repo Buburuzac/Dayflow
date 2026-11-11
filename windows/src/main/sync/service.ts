@@ -21,7 +21,8 @@ import { HttpError, SyncClient, normalizeServerUrl } from './client.ts'
 import type { FetchLike } from './client.ts'
 import type { DocSources } from './docs.ts'
 import type { DocEntity } from './hooks.ts'
-import { buildBatch } from './outbox.ts'
+import { buildBatch, commitAccepted, requeueObservations, rescopeCards } from './outbox.ts'
+import { samePolicy, type SyncPolicy } from './scope.ts'
 import { SHARE_LEVELS, SyncRepo } from './repo.ts'
 
 export interface TokenStore {
@@ -171,6 +172,9 @@ export class SyncService {
     })
     this.store.setSyncEnabled(true)
     this.repo.backfill(this.deps.backfillDays ?? 30)
+    // Observation upload may have been switched off while signed out: remove what an earlier
+    // session left on the server.
+    if (!this.store.syncPolicy.observations) requeueObservations(this.store, false)
     this.needsDocBackfill = true
     this.failures = 0
     try {
@@ -241,6 +245,18 @@ export class SyncService {
   }
 
   /** Something was queued: push soon (debounced). */
+  /**
+   * Applies Settings → Sync & team → "What leaves this PC". Cards are re-checked on the next cycle;
+   * switching observation upload off sends tombstones so the server drops their text.
+   */
+  setPolicy(policy: SyncPolicy): void {
+    const prev = this.store.syncPolicy
+    if (samePolicy(prev, policy)) return
+    this.store.syncPolicy = { ...policy, excludedCategories: [...policy.excludedCategories] }
+    if (this.signedIn() && prev.observations !== policy.observations) requeueObservations(this.store, policy.observations)
+    this.nudge()
+  }
+
   nudge(): void {
     if (!this.deps.background || !this.signedIn()) return
     if (this.pushTimer) return
@@ -285,8 +301,12 @@ export class SyncService {
     this.emitStatus()
     try {
       this.rejectNote = null
-      await this.push()
+      // Pull first: edits from the user's other devices are merged locally before this device
+      // re-sends any card, so a scope change never overrides an edit it hasn't seen yet.
       await this.pull()
+      // Scopes may have changed (project confirmed, archived or deleted, a category edit, policy).
+      rescopeCards(this.store)
+      await this.push()
       if (this.needsDocBackfill) {
         this.needsDocBackfill = false
         this.backfillDocs()
@@ -341,6 +361,8 @@ export class SyncService {
         if (reason === undefined) ok.push(batch.used[i])
         else bad.push({ entry: batch.used[i], reason })
       }
+      // Remember what the server now holds (card scope, observation uploaded) for accepted changes only.
+      commitAccepted(batch, (i) => !rejected.has(batch.changes[i].id))
       this.repo.markPushed(ok)
       if (bad.length) {
         this.repo.markRejected(bad)

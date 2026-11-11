@@ -174,8 +174,8 @@ function mockServer(opts: { devAuth: boolean; clientId?: string }) {
   }
 }
 
-function card(start: string, end: string, title: string): ActivityCardData {
-  return { startTime: start, endTime: end, category: 'Work', subcategory: '', title, summary: `${title} summary`, detailedSummary: '' }
+function card(start: string, end: string, title: string, extra: Partial<ActivityCardData> = {}): ActivityCardData {
+  return { startTime: start, endTime: end, category: 'Work', subcategory: '', title, summary: `${title} summary`, detailedSummary: '', ...extra }
 }
 
 const t9 = Math.floor(new Date(2026, 10, 8, 9, 0).getTime() / 1000)
@@ -188,6 +188,8 @@ const REAL_SERVER = process.env.DAYFLOW_SYNC_E2E_URL ?? ''
 
 function device(dir: string, name: string, url: string, background = false) {
   const store = new Store(join(dir, `${name}.sqlite`))
+  // The loop tests exchange full cards; the upload policy has its own tests (sync-scope.test.ts).
+  store.syncPolicy = { excludedCategories: [], outOfScope: false, observations: true }
   let token = ''
   let cardsChanged = 0
   const settings = {
@@ -307,9 +309,13 @@ test('sync loop: two devices of one user exchange cards, edits, projects and doc
     assert.deepEqual(B.svc.listProjects().map((p) => [p.name, p.defaultShare, p.odoo.taskId, p.myShare]), [['Dayflow', 'cards', 34, 'time']])
     assert.equal(A.svc.status().lastError, null, 'no change was rejected')
     assert.equal(B.svc.status().lastError, null, 'no change was rejected')
-    const onB2 = B.svc.repo.attachProjects(B.store.cardsForDay('2026-11-08')).find((c) => c.uuid === v2.uuid)!
-    assert.equal(onB2.private, true)
-    assert.deepEqual(onB2.projects?.map((p) => [p.name, p.source, p.confirmed]), [['Dayflow', 'manual', true]])
+    // A private card never leaves its PC: the copy B already had is removed, and on A it stays intact.
+    const onB2 = B.svc.repo.attachProjects(B.store.cardsForDay('2026-11-08')).find((c) => c.uuid === v2.uuid)
+    assert.equal(onB2, undefined)
+    const onA2 = A.svc.repo.attachProjects(A.store.cardsForDay('2026-11-08')).find((c) => c.uuid === v2.uuid)!
+    assert.equal(onA2.private, true)
+    assert.equal(onA2.title, 'Desktop: sync design v2')
+    assert.deepEqual(onA2.projects?.map((p) => [p.name, p.source, p.confirmed]), [['Dayflow', 'manual', true]])
 
     // Nothing but non-error, non-chat records went up; every change came from the caller's device.
     const all = REAL_SERVER ? [] : mock.pushes.flat()
@@ -383,6 +389,47 @@ test('sign-in: dev auth is refused when the server does not offer it', async () 
   } finally {
     A.store.close()
     await mock.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('upload policy: out-of-scope and personal cards across two devices (DAYFLOW_SYNC_E2E_URL)', { skip: !REAL_SERVER }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dayflow-scope-e2e-'))
+  const A = device(dir, 'desktop', REAL_SERVER)
+  const B = device(dir, 'laptop', REAL_SERVER)
+  // A uses the default policy: Personal never leaves, unassigned work is "Out of scope", no observations.
+  A.store.syncPolicy = { excludedCategories: ['Personal'], outOfScope: true, observations: false }
+  try {
+    await A.svc.signInDev('scope@velesagro.pl')
+    await B.svc.signInDev('scope@velesagro.pl')
+    const b1 = A.store.createBatch(t9, t9 + 3600, [])
+    A.store.replaceCardsInRange(t9, t9 + 3600, [
+      card('9:00 AM', '9:30 AM', 'Biosun invoice import'),
+      card('9:30 AM', '10:00 AM', 'Booked the dentist', { category: 'Personal' }),
+    ], b1)
+    A.store.saveObservations(b1, [{ startTs: t9, endTs: t9 + 60, observation: 'reading private messages' }], 'm')
+    await A.svc.syncNow()
+    await B.svc.syncNow()
+    let onB = B.store.cardsForDay('2026-11-08').map((c) => c.title).sort()
+    assert.deepEqual(onB, ['Out of scope'], 'work arrives without content; the personal card not at all')
+    assert.equal((B.store.db.prepare('SELECT COUNT(*) AS n FROM observations').get() as { n: number }).n, 0, 'no observations uploaded')
+
+    // Confirming a project publishes the card in full; the server accepts it over the redacted copy.
+    const wsId = (await A.svc.me()).workspaces[0]?.id
+    if (wsId) {
+      const proj = A.svc.saveProject({ workspaceId: wsId, name: 'Biosun', color: '#336699', description: '', rules: {}, defaultShare: 'cards', odoo: {} })
+      const work = A.store.cardsForDay('2026-11-08').find((c) => c.title === 'Biosun invoice import')!
+      A.svc.assignCard(work.id, proj.id)
+      await A.svc.syncNow()
+      await B.svc.syncNow()
+      onB = B.store.cardsForDay('2026-11-08').map((c) => c.title).sort()
+      assert.deepEqual(onB, ['Biosun invoice import'])
+    }
+    // A's own cards are untouched by the redacted echoes.
+    assert.deepEqual(A.store.cardsForDay('2026-11-08').map((c) => c.title).sort(), ['Biosun invoice import', 'Booked the dentist'])
+  } finally {
+    A.store.close()
+    B.store.close()
     rmSync(dir, { recursive: true, force: true })
   }
 })

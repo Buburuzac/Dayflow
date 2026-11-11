@@ -10,6 +10,9 @@ import { Store } from '../src/main/db.ts'
 import type { ActivityCardData } from '../src/main/llm/types.ts'
 import { SyncRepo } from '../src/main/sync/repo.ts'
 import { buildBatch } from '../src/main/sync/outbox.ts'
+import type { SyncPolicy } from '../src/main/sync/scope.ts'
+
+const SHARE_ALL: SyncPolicy = { excludedCategories: [], outOfScope: false, observations: true }
 import { RemoteApplier } from '../src/main/sync/apply.ts'
 import type { DocSources } from '../src/main/sync/docs.ts'
 import { llmAssignments, matchRules, assignProjects } from '../src/main/sync/assign.ts'
@@ -31,6 +34,8 @@ function withStore(fn: (store: Store, dir: string) => void | Promise<void>) {
   return async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dayflow-sync-'))
     const store = new Store(join(dir, 'db.sqlite'))
+    // These tests cover the sync mechanics, so everything is shared (see sync-scope.test.ts for the policy).
+    store.syncPolicy = SHARE_ALL
     try {
       await fn(store, dir)
     } finally {

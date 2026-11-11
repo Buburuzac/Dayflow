@@ -42,6 +42,8 @@ export function TimelineView({
     const m = new Map<string, string>()
     for (const c of settings.categories) m.set(c.name, c.color)
     m.set('System', '#E5A08B')
+    // Time-only blocks synced from the user's other devices (sync/scope.ts).
+    m.set('Out of scope', '#C9C4BE')
     return m
   }, [settings.categories])
 
@@ -180,7 +182,7 @@ export function TimelineView({
                         </span>
                       )}
                       {c.private && (
-                        <span className="private-mark" title="Private: synced to your devices only, never shared with the team">
+                        <span className="private-mark" title="Private: stays on this PC, never synced or shared">
                           private
                         </span>
                       )}

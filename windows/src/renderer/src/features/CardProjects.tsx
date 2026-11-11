@@ -102,7 +102,7 @@ export function CardSyncSection({ card }: { card: TimelineCard }) {
       {status?.signedIn && (
         <label className="check private-toggle">
           <input type="checkbox" checked={!!card.private} onChange={(e) => void run(call('sync:setCardPrivate', card.id, e.target.checked))} />
-          Private — sync to my devices only, never show to the team
+          Private — never leaves this PC (not synced to my other devices or the team)
         </label>
       )}
       {error && <div className="notice err">{error}</div>}

@@ -8,6 +8,7 @@ import type { BatchInfo, ScreenshotInfo, TimelineCard } from '../shared/types.ts
 import { Hlc, formatHlc, parseHlc } from '../shared/sync-types.ts'
 import type { SyncEntity } from '../shared/sync-types.ts'
 import { DEFAULT_SYNC_SERVER_URL } from '../shared/sync-ui.ts'
+import { DEFAULT_SYNC_POLICY, type SyncPolicy } from './sync/scope.ts'
 import type { ActivityCardData, LLMCallLog, Observation } from './llm/types.ts'
 import { formatClock, logicalDay, dayRange, resolveCardRange } from './time.ts'
 
@@ -64,6 +65,8 @@ export class Store {
   private lastHlc = ''
   /** When false (not signed in to a sync server) nothing is queued in the outbox. */
   syncEnabled = false
+  /** What may leave this PC (Settings → Sync & team); applied when changes are built for upload. */
+  syncPolicy: SyncPolicy = { ...DEFAULT_SYNC_POLICY }
   /** Called after something was queued in the outbox (the sync engine debounces a push). */
   onOutbox: (() => void) | null = null
 
@@ -140,6 +143,9 @@ export class Store {
       ['hlc', 'TEXT'],
       ['field_hlc', 'TEXT'],
       ['device_id', 'TEXT'],
+      // What the server last received for this card (sync/scope.ts) and the clock of that change.
+      ['sync_scope', 'TEXT'],
+      ['scope_hlc', 'TEXT'],
     ])
     // Observations pulled from other devices have no local batch, so batch_id must be nullable.
     // Older installs created it NOT NULL: rebuild the table once (nothing references it).
@@ -176,6 +182,8 @@ export class Store {
       ['uuid', 'TEXT'],
       ['hlc', 'TEXT'],
       ['device_id', 'TEXT'],
+      // 1 once the server has accepted this observation, 0 after its tombstone was accepted.
+      ['uploaded', 'INTEGER'],
     ])
 
     this.db.exec(`

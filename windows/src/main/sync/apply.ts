@@ -197,7 +197,14 @@ export class RemoteApplier {
     // User-editable fields merge per field: newer field HLC wins. Without an explicit field HLC
     // only the origin device's record clock counts (its copy of the field is authoritative).
     const fromOrigin = origin === c.deviceId && !local
-    const remoteField = (f: string) => c.fieldHlc?.[f] ?? (fromOrigin ? c.hlc : '')
+    // Field clocks stamped by this device are our own writes coming back. They may carry the scoped
+    // upload form of the card ("Out of scope" / a wiped personal card) and must never replace the
+    // full local copy; edits made on other devices carry their own clocks and still merge.
+    const ownClock = (h: string) => h.endsWith(`-${me}`)
+    const remoteField = (f: string) => {
+      const h = c.fieldHlc?.[f] ?? (fromOrigin ? c.hlc : '')
+      return h && !ownClock(h) ? h : ''
+    }
     const localField = (f: string) => (typeof fh[f] === 'string' ? (fh[f] as string) : rowHlc)
     if (c.data) {
       for (const f of ['title', 'category', 'subcategory'] as const) {

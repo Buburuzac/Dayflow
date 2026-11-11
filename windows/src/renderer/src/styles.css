@@ -696,3 +696,13 @@ h1 {
   resize: vertical;
   min-height: 60px;
 }
+
+.row.wrap {
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+.sync-privacy {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}

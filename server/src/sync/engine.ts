@@ -453,7 +453,8 @@ async function applyObservation(c: ApplyCtx, ch: SyncChange): Promise<void> {
       [ch.id, ch.deviceId, d.startTs, d.endTs, d.text, ch.deleted ?? false, ch.hlc, seq],
     )
   } else {
-    await c.tx.query(`UPDATE observations SET device_id=$2, deleted=true, hlc=$3, server_seq=$4 WHERE id=$1`, [ch.id, ch.deviceId, ch.hlc, seq])
+    // A deleted observation keeps no text: clients delete them when the user stops sharing observations.
+    await c.tx.query(`UPDATE observations SET device_id=$2, deleted=true, text='', hlc=$3, server_seq=$4 WHERE id=$1`, [ch.id, ch.deviceId, ch.hlc, seq])
   }
   c.fx.notifyUsers.add(c.auth.userId)
 }
