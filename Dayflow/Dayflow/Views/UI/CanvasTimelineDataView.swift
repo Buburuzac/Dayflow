@@ -35,8 +35,10 @@ private struct CanvasPositionedActivity: Identifiable {
   let faviconSecondaryHost: String?
   let failureCount: Int
   let batchIds: [Int64]
-  /// Dayflow Sync: a card from another of the user's devices (drawn in its own lane).
+  /// A card from another of the user's devices.
   var isRemote: Bool = false
+  /// Split the card only when local and remote activity overlap in time.
+  var needsSeparateLane: Bool = false
 }
 
 struct CanvasTimelineDataView: View {
@@ -327,17 +329,13 @@ struct CanvasTimelineDataView: View {
   // No GeometryReader here on purpose: inside a ScrollView its closure re-runs
   // as the content moves, which rebuilt every card on every scroll frame.
   // Cards fill the layer's width and are offset to their start time instead.
-  /// Dayflow Sync: when other devices' cards are on the day, this Mac's cards take the left half
-  /// and theirs the right half (as Windows Timeline.tsx does), so overlapping time stays readable.
-  private var hasRemoteLane: Bool { positionedActivities.contains { $0.isRemote } }
-
   private func laneMaxWidth(_ item: CanvasPositionedActivity) -> CGFloat {
-    guard hasRemoteLane, cardsLayerWidth > 0 else { return .infinity }
+    guard item.needsSeparateLane, cardsLayerWidth > 0 else { return .infinity }
     return max(0, cardsLayerWidth / 2 - 2)
   }
 
   private func laneOffsetX(_ item: CanvasPositionedActivity) -> CGFloat {
-    guard hasRemoteLane, cardsLayerWidth > 0, item.isRemote else { return 0 }
+    guard item.needsSeparateLane, cardsLayerWidth > 0, item.isRemote else { return 0 }
     return cardsLayerWidth / 2 + 2
   }
 
@@ -666,8 +664,8 @@ struct CanvasTimelineDataView: View {
       // Mitigation transform: resolve visual overlaps by trimming larger cards
       // so that smaller cards "win". This is a display-only fix to handle
       // upstream card-generation overlap bugs without touching stored data.
-      // Dayflow Sync: other devices' cards are trimmed among themselves and drawn in their own
-      // lane, so a short remote card never hides a long local one (and vice versa).
+      // Local and remote cards are trimmed within their own source. Only cards that actually
+      // overlap across sources need separate lanes.
       let remoteIds = MacSyncLookup.remoteCardIds(payload.activities.compactMap { $0.recordId })
       let localActivities = payload.activities.filter { a in a.recordId.map { !remoteIds.contains($0) } ?? true }
       let remoteActivities = payload.activities.filter { a in a.recordId.map { remoteIds.contains($0) } ?? false }
@@ -675,6 +673,20 @@ struct CanvasTimelineDataView: View {
       let remoteSegments =
         remoteActivities.isEmpty ? [] : TimelineActivityLoader.resolveDisplaySegments(from: remoteActivities)
       let segments = localSegments + remoteSegments
+      var splitSegmentIDs = Set<String>()
+      for i in segments.indices {
+        let first = segments[i]
+        let firstRemote = first.activity.recordId.map { remoteIds.contains($0) } ?? false
+        for j in segments.indices where j > i {
+          let second = segments[j]
+          let secondRemote = second.activity.recordId.map { remoteIds.contains($0) } ?? false
+          guard firstRemote != secondRemote,
+            first.start < second.end, second.start < first.end
+          else { continue }
+          splitSegmentIDs.insert(first.activity.id)
+          splitSegmentIDs.insert(second.activity.id)
+        }
+      }
       let recordingProjection = TimelineActivityLoader.recordingProjectionWindow(
         for: payload.timelineDate,
         displaySegments: localSegments,
@@ -708,7 +720,8 @@ struct CanvasTimelineDataView: View {
           faviconSecondaryHost: secondaryHost,
           failureCount: seg.failureCount,
           batchIds: seg.batchIds,
-          isRemote: seg.activity.recordId.map { remoteIds.contains($0) } ?? false
+          isRemote: seg.activity.recordId.map { remoteIds.contains($0) } ?? false,
+          needsSeparateLane: splitSegmentIDs.contains(seg.activity.id)
         )
       }
 
@@ -793,10 +806,11 @@ struct CanvasTimelineDataView: View {
     }
 
     var cardFrames = positionedActivities.map { item in
-      CGRect(
-        x: cardsMinX,
+      let splitWidth = max(0, cardsWidth / 2 - 2)
+      return CGRect(
+        x: cardsMinX + (item.needsSeparateLane && item.isRemote ? cardsWidth / 2 + 2 : 0),
         y: contentFrame.minY + item.yPosition,
-        width: cardsWidth,
+        width: item.needsSeparateLane ? splitWidth : cardsWidth,
         height: item.height
       )
     }

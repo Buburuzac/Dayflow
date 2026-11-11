@@ -10,6 +10,7 @@ import { ipcErrorMessage } from './Settings.tsx'
 import { ReviewPromptButton } from './features/Review.tsx'
 import { TimelapseButton } from './features/Timelapse.tsx'
 import { currentDay, dayLabel, dayStart, fmtDuration, shiftDay } from './dates.ts'
+import { crossDeviceOverlapIds } from './timeline-layout.ts'
 
 const PX_PER_MIN = 2.2
 
@@ -56,8 +57,8 @@ export function TimelineView({
       : cards.filter((c) =>
           projectFilter === '-' ? !c.isError && !(c.projects ?? []).length : (c.projects ?? []).some((p) => p.projectId === projectFilter),
         )
-  // Cards from another of the user's devices get their own lane so overlapping time stays readable.
-  const hasRemote = visibleCards.some((c) => c.remote)
+  // Full width when only one device has a card at this time; split only actual overlaps.
+  const splitCards = crossDeviceOverlapIds(visibleCards)
   const selectedCard = visibleCards.find((c) => c.id === selected) ?? null
 
   // Range of hours to draw: from the first card (or 8 AM) to the last card (or now).
@@ -170,10 +171,14 @@ export function TimelineView({
                 const top = ((c.startTs - base) / 60 - startHour * 60) * PX_PER_MIN
                 const height = Math.max(22, ((c.endTs - c.startTs) / 60) * PX_PER_MIN - 3)
                 const color = colors.get(c.category) ?? '#ccc'
+                const favicon = height > 30 ? c.appSites?.primary : undefined
+                const hasFavicon = !!favicon
+                const hasProjects = !!c.projects?.length
+                const lane = splitCards.has(c.id) ? (c.remote ? 'lane-remote' : 'lane-local') : ''
                 return (
                   <div
                     key={c.id}
-                    className={`card ${c.isError ? 'error' : ''} ${selected === c.id ? 'selected' : ''} ${height < 60 ? 'compact' : ''} ${hasRemote ? (c.remote ? 'lane-remote' : 'lane-local') : ''}`}
+                    className={`card ${c.isError ? 'error' : ''} ${selected === c.id ? 'selected' : ''} ${height < 60 ? 'compact' : ''} ${lane} ${hasProjects ? 'has-projects' : ''} ${hasFavicon ? 'has-favicon' : ''}`}
                     style={{ top, height, ['--cat' as string]: color }}
                     onClick={() => setSelected(c.id)}
                     role="button"
@@ -198,7 +203,7 @@ export function TimelineView({
                       {c.startTime} – {c.endTime}
                     </span>
                     {height > 120 && c.summary && <span className="card-summary">{c.summary}</span>}
-                    {c.appSites?.primary && height > 30 && <Favicon domain={c.appSites.primary} />}
+                    {favicon && <Favicon domain={favicon} />}
                   </div>
                 )
               })}

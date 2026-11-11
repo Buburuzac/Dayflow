@@ -289,16 +289,16 @@ struct CanvasProjectCluster: View {
 
   var body: some View {
     if let info = store.info(for: recordId), !info.projects.isEmpty {
-      HStack(spacing: -5) {
+      HStack(spacing: -4) {
         ForEach(Array(info.projects.prefix(4)), id: \.projectId) { project in
           ZStack {
             Circle().fill(syncProjectColor(project.color))
             if !project.icon.isEmpty {
-              Text(project.icon).font(.system(size: 10))
+              Text(project.icon).font(.system(size: 8))
             }
           }
-          .frame(width: 17, height: 17)
-          .overlay(Circle().stroke(.white, lineWidth: 1.5))
+          .frame(width: 12, height: 12)
+          .overlay(Circle().stroke(.white, lineWidth: 1))
           .opacity(project.confirmed ? 1 : 0.5)
           .help("\(project.name) · \(Int((project.share * 100).rounded()))%")
         }
@@ -306,7 +306,7 @@ struct CanvasProjectCluster: View {
           Text("+\(info.projects.count - 4)").font(.system(size: 9, weight: .bold))
         }
       }
-      .padding(.top, 3)
+      .padding(.top, 5)
       .padding(.trailing, 13)
     }
   }
