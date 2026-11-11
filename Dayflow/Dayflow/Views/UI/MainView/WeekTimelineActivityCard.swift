@@ -17,8 +17,10 @@ struct WeekTimelineCardPalette {
 
 struct WeekTimelineActivityCard: View {
   @Environment(\.dayflowTheme) private var theme
+  @ObservedObject private var cardSyncStore = CardSyncInfoStore.shared
 
   let cardId: String
+  let recordId: Int64?
   let title: String
   let hoverTimeLabel: String
   let height: CGFloat
@@ -159,7 +161,7 @@ struct WeekTimelineActivityCard: View {
       Spacer(minLength: 0)
     }
     .padding(.leading, 9)
-    .padding(.trailing, 6)
+    .padding(.trailing, cardSyncStore.info(for: recordId)?.projects.isEmpty == false ? 25 : 6)
     .padding(.vertical, verticalPadding)
     // Failed-card styling (matches Day view): peach background, red dashed
     // stroke, and no left accent bar. Kept as three inline branches rather
@@ -212,6 +214,7 @@ struct WeekTimelineActivityCard: View {
       x: 0,
       y: isHovered ? 4 : 2
     )
+    .overlay(alignment: .topTrailing) { CanvasProjectCluster(recordId: recordId) }
   }
 
   // Hidden measurement of the expanded card's natural height. Structurally

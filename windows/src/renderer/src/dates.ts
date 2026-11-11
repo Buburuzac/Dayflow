@@ -2,6 +2,10 @@
 
 const BOUNDARY = 4
 
+export function clock24(timestampSeconds: number): string {
+  return new Date(timestampSeconds * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }

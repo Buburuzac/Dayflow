@@ -32,7 +32,7 @@ export function historyGroup(updatedAtSec: number, now = new Date()): HistoryGro
 
 function rowTime(updatedAtSec: number, group: HistoryGroup): string {
   const d = new Date(updatedAtSec * 1000)
-  if (group === 'TODAY' || group === 'YESTERDAY') return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  if (group === 'TODAY' || group === 'YESTERDAY') return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
   return `${MONTHS[d.getMonth()]} ${d.getDate()}`
 }
 
@@ -101,7 +101,7 @@ export function HistoryPanel(props: {
 
 function fmtUpdated(ms: number): string {
   const d = new Date(ms)
-  return `${MONTHS[d.getMonth()]} ${d.getDate()} ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+  return `${MONTHS[d.getMonth()]} ${d.getDate()} ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}`
 }
 
 export function MemoryPanel(props: {

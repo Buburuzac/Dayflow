@@ -696,13 +696,14 @@ export class Store {
     return rows.map((r) => Store.mapCard(r as Record<string, unknown>, this.deviceId))
   }
 
-  /** Every device's cards for the day (pulled cards included). */
-  cardsForDay(day: string): TimelineCard[] {
+  /** Cards for the day. Timeline can restrict this to the current device. */
+  cardsForDay(day: string, localOnly = false): TimelineCard[] {
     const { start, end } = dayRange(day)
+    const local = localOnly ? ` AND ${this.localSql}` : ''
     return this.mapCards(
       this.db
-        .prepare('SELECT * FROM timeline_cards WHERE is_deleted = 0 AND start_ts >= ? AND start_ts < ? ORDER BY start_ts ASC')
-        .all(start, end),
+        .prepare(`SELECT * FROM timeline_cards WHERE is_deleted = 0 AND start_ts >= ? AND start_ts < ?${local} ORDER BY start_ts ASC`)
+        .all(...(localOnly ? [start, end, this.deviceId] : [start, end])),
     )
   }
 

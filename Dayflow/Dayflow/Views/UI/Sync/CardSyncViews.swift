@@ -271,7 +271,6 @@ struct CanvasCardSyncDecoration: ViewModifier {
     content
       .overlay(alignment: .topTrailing) {
         CanvasProjectCluster(recordId: recordId)
-          .allowsHitTesting(false)
       }
       .overlay(alignment: .bottomTrailing) {
         CanvasCardSyncOverlay(recordId: recordId, height: height)
@@ -281,31 +280,19 @@ struct CanvasCardSyncDecoration: ViewModifier {
   }
 }
 
-/// Compact project markers stay visible even on a short timeline tile. Clicking the tile opens
-/// the project breakdown in its detail panel.
+/// A single project icon keeps the card clear; hover reveals the complete time split.
 struct CanvasProjectCluster: View {
   let recordId: Int64?
   @ObservedObject private var store = CardSyncInfoStore.shared
 
   var body: some View {
     if let info = store.info(for: recordId), !info.projects.isEmpty {
-      HStack(spacing: -4) {
-        ForEach(Array(info.projects.prefix(4)), id: \.projectId) { project in
-          ZStack {
-            Circle().fill(syncProjectColor(project.color))
-            if !project.icon.isEmpty {
-              Text(project.icon).font(.system(size: 8))
-            }
-          }
-          .frame(width: 12, height: 12)
-          .overlay(Circle().stroke(.white, lineWidth: 1))
-          .opacity(project.confirmed ? 1 : 0.5)
-          .help("\(project.name) · \(Int((project.share * 100).rounded()))%")
-        }
-        if info.projects.count > 4 {
-          Text("+\(info.projects.count - 4)").font(.system(size: 9, weight: .bold))
-        }
-      }
+      Image(systemName: "folder.fill")
+        .font(.system(size: 11))
+        .foregroundColor(.secondary)
+        .frame(width: 16, height: 16)
+        .background(RoundedRectangle(cornerRadius: 4).fill(.white.opacity(0.85)))
+        .help(info.projects.map { "\($0.name): \(Int(($0.share * 100).rounded()))%\($0.confirmed ? "" : " · suggested")" }.joined(separator: "\n"))
       .padding(.top, 5)
       .padding(.trailing, 13)
     }
@@ -331,10 +318,6 @@ struct CanvasCardSyncOverlay: View {
           CardRemoteBadge(deviceName: store.deviceLabel(info.deviceId))
             .allowsHitTesting(false)
         }
-        ForEach(Array(info.projects.prefix(3)), id: \.projectId) { project in
-          CardProjectChip(project: project, recordId: info.recordId)
-            .allowsHitTesting(!project.confirmed)
-        }
       }
       .padding(.trailing, 16)
       .padding(.bottom, 4)
@@ -342,7 +325,7 @@ struct CanvasCardSyncOverlay: View {
   }
 
   private func hasMarks(_ info: CardSyncInfo) -> Bool {
-    info.isPrivate || info.remote || !info.projects.isEmpty
+    info.isPrivate || info.remote
   }
 }
 

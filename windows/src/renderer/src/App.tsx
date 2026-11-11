@@ -9,6 +9,8 @@ import { DailyView } from './features/Daily.tsx'
 import { FlowView } from './features/Flow.tsx'
 import { ReviewView } from './features/Review.tsx'
 import { TeamView } from './features/Team.tsx'
+import { useSyncStatus } from './features/Sync.tsx'
+import { clock24 } from './dates.ts'
 
 type Tab = 'timeline' | 'daily' | 'weekly' | 'chat' | 'flow' | 'team' | 'review' | 'settings'
 
@@ -102,12 +104,13 @@ export function App() {
 
 function RecorderPill({ status }: { status: AppStatus }) {
   const [open, setOpen] = useState(false)
+  const [sync] = useSyncStatus()
   const label =
     status.recorder === 'recording'
       ? 'Recording'
       : status.recorder === 'paused'
         ? status.pausedUntil
-          ? `Paused · ${new Date(status.pausedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+          ? `Paused · ${clock24(status.pausedUntil / 1000)}`
           : 'Paused'
         : status.recorder === 'locked'
           ? 'Screen locked'
@@ -126,6 +129,7 @@ function RecorderPill({ status }: { status: AppStatus }) {
         {label}
         {!recording && <span className="pill-action">Resume</span>}
       </button>
+      {sync?.signedIn && <div className="recording-identity"><span title={sync.user?.email}>{sync.user?.email}</span><span title={sync.deviceName}>{sync.deviceName}</span></div>}
       {open && recording && (
         <div className="pill-menu" onMouseLeave={() => setOpen(false)}>
           {[

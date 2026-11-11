@@ -36,13 +36,13 @@ export function CardProjectChips({ card }: { card: TimelineCard }) {
   )
 }
 
-/** Always visible, including on short and narrow timeline tiles. */
+/** One unobtrusive project icon; the full time split is visible on hover. */
 export function ProjectCluster({ card, onOpen }: { card: TimelineCard; onOpen: () => void }) {
   const list = card.projects ?? []
   if (!list.length) return null
-  return <span className="project-cluster" role="button" tabIndex={0} aria-label="Show project time" onClick={(e) => { e.stopPropagation(); onOpen() }} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}>
-    {list.slice(0, 4).map((p) => <span key={p.projectId} className={`project-mark ${p.icon ? 'has-icon' : ''} ${p.confirmed ? '' : 'unconfirmed'}`} style={{ ['--proj' as string]: p.color }} title={`${p.name} · ${Math.round(p.share * 100)}%${p.confirmed ? '' : ' · suggested'}`}>{p.icon || ''}</span>)}
-    {list.length > 4 && <span className="project-more">+{list.length - 4}</span>}
+  const title = list.map((p) => `${p.name}: ${Math.round(p.share * 100)}%${p.confirmed ? '' : ' · suggested'}`).join('\n')
+  return <span className="project-cluster" role="button" tabIndex={0} aria-label={`Projects: ${title}`} title={title} onClick={(e) => { e.stopPropagation(); onOpen() }} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}>
+    <span className="project-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M1.5 3.5h5l1.5 2h6.5v7h-13z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" /></svg></span>
   </span>
 }
 

@@ -74,7 +74,7 @@ export function StandupCard({ view, onView }: { view: StandupView; onView: (v: S
   }
 
   const generatedBy = draft.generation && !isPlaceholder
-    ? [draft.generation.modelOrTool, draft.generation.generatedAt && new Date(draft.generation.generatedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })]
+    ? [draft.generation.modelOrTool, draft.generation.generatedAt && new Date(draft.generation.generatedAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', hour12: false })]
         .filter(Boolean)
         .join(' · ')
     : ''

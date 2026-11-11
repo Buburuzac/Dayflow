@@ -169,12 +169,7 @@ private struct WeekTimelineHoverPrototypeHarness: View {
     let absoluteMinutes = minutes + 4 * 60
     let hour24 = (absoluteMinutes / 60) % 24
     let minute = absoluteMinutes % 60
-    let period = hour24 >= 12 ? "PM" : "AM"
-    let hour12: Int = {
-      let raw = hour24 % 12
-      return raw == 0 ? 12 : raw
-    }()
-    return String(format: "%d:%02d %@", hour12, minute, period)
+    return String(format: "%02d:%02d", hour24, minute)
   }
 }
 

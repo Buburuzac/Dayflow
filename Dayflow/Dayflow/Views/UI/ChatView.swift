@@ -17,7 +17,7 @@ let chatViewDebugTimestampFormatter: DateFormatter = {
 
 let chatViewMemoryUpdatedFormatter: DateFormatter = {
   let formatter = DateFormatter()
-  formatter.setLocalizedDateFormatFromTemplate("MMMd jmm")
+  formatter.setLocalizedDateFormatFromTemplate("MMMd HHmm")
   return formatter
 }()
 

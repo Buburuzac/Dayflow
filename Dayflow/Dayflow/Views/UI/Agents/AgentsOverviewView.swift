@@ -126,7 +126,7 @@ struct AgentsOverviewView: View {
     let iso = ISO8601DateFormatter()
     guard let date = iso.date(from: recap.generatedAt) else { return nil }
     let formatter = DateFormatter()
-    formatter.timeStyle = .short
+    formatter.dateFormat = "HH:mm"
     formatter.dateStyle = .none
     return String(
       localized: "Generated \(formatter.string(from: date))",

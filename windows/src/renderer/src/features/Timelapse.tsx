@@ -18,7 +18,7 @@ function fmtBytes(n: number): string {
   if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`
   return `${(n / 1024 ** 3).toFixed(2)} GB`
 }
-const shortTime = (ts: number) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+const shortTime = (ts: number) => new Date(ts * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
 
 function useProgress(cardId: number): [TimelapseProgress | null, (p: TimelapseProgress | null) => void] {
   const [p, setP] = useState<TimelapseProgress | null>(null)

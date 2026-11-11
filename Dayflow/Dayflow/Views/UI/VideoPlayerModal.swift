@@ -11,7 +11,7 @@ import SwiftUI
 
 private let videoPlayerTimeFormatter: DateFormatter = {
   let formatter = DateFormatter()
-  formatter.timeStyle = .short
+  formatter.dateFormat = "HH:mm"
   formatter.dateStyle = .none
   return formatter
 }()

@@ -140,7 +140,7 @@ private struct ChatHistoryRow: View {
 
   private static let timeFormatter: DateFormatter = {
     let formatter = DateFormatter()
-    formatter.timeStyle = .short
+    formatter.dateFormat = "HH:mm"
     formatter.dateStyle = .none
     return formatter
   }()

@@ -9,7 +9,7 @@ import SwiftUI
 
 private let teamClockFormatter: DateFormatter = {
   let f = DateFormatter()
-  f.timeStyle = .short
+  f.dateFormat = "HH:mm"
   f.dateStyle = .none
   return f
 }()
@@ -406,11 +406,18 @@ struct TeamFeedRow: View {
           .fixedSize(horizontal: false, vertical: true)
       }
       if let detailed = entry.detailed, !detailed.isEmpty {
-        Text(detailed)
-          .font(.custom("Figtree", size: 11))
-          .foregroundColor(SettingsStyle.secondary)
-          .fixedSize(horizontal: false, vertical: true)
-          .textSelection(.enabled)
+        VStack(alignment: .leading, spacing: 2) {
+          ForEach(syncDetailRecords(summary: detailed, distractions: [])) { line in
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+              if !line.stamp.isEmpty { Text(line.stamp).bold() }
+              Text(line.text)
+            }
+          }
+        }
+        .font(.custom("Figtree", size: 11))
+        .foregroundColor(SettingsStyle.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        .textSelection(.enabled)
       }
     }
   }

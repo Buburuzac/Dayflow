@@ -37,7 +37,7 @@ function dur(seconds: number): string {
   return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
 }
 
-const timeOf = (ts: number) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+const timeOf = (ts: number) => new Date(ts * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
 const isoSec = (iso: string) => new Date(iso).getTime() / 1000
 
 function providerLabel(s: SettingsWithSecrets, f: FlowAgentSettings | null): string {

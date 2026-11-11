@@ -484,9 +484,7 @@ func fallbackColorHex(for key: String) -> String {
 
 func formatAxisHourLabel(fromAbsoluteHour hour: Int) -> String {
   let normalized = ((hour % 24) + 24) % 24
-  let date =
-    Calendar.current.date(bySettingHour: normalized, minute: 0, second: 0, of: Date()) ?? Date()
-  return date.formatted(.dateTime.hour())
+  return String(format: "%02d:00", normalized)
 }
 
 func formatCount(_ count: Int) -> String {

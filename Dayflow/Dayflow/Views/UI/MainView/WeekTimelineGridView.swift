@@ -385,6 +385,7 @@ struct WeekTimelineGridView: View {
 
         WeekTimelineActivityCard(
           cardId: item.id,
+          recordId: item.activity.recordId,
           title: item.title,
           hoverTimeLabel: item.hoverTimeLabel,
           height: item.height,
@@ -602,6 +603,7 @@ struct WeekTimelineGridView: View {
       await MainActor.run {
         let commitStart = CFAbsoluteTimeGetCurrent()
         positionedActivities = positioned
+        CardSyncInfoStore.shared.refresh(recordIds: positioned.compactMap { $0.activity.recordId })
         recordingProjection = projection
         hasAnyActivities = !positioned.isEmpty
         if let selectedActivity,
@@ -825,15 +827,12 @@ struct WeekTimelineGridView: View {
 
   private func formatHour(_ hour: Int) -> String {
     let normalizedHour = hour >= 24 ? hour - 24 : hour
-    let adjustedHour =
-      normalizedHour > 12 ? normalizedHour - 12 : (normalizedHour == 0 ? 12 : normalizedHour)
-    let period = normalizedHour >= 12 ? "PM" : "AM"
-    return "\(adjustedHour):00 \(period)"
+    return String(format: "%02d:00", normalizedHour)
   }
 
   private static let hoverTimeFormatter: DateFormatter = {
     let formatter = DateFormatter()
-    formatter.dateFormat = "h:mm a"
+    formatter.dateFormat = "HH:mm"
     formatter.locale = Locale(identifier: "en_US_POSIX")
     return formatter
   }()

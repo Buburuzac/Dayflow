@@ -30,7 +30,7 @@ struct ScreenshotSlideshowModal: View {
 
   private static let timeFormatter: DateFormatter = {
     let formatter = DateFormatter()
-    formatter.timeStyle = .short
+    formatter.dateFormat = "HH:mm"
     return formatter
   }()
 
@@ -358,7 +358,7 @@ private struct ScreenshotSlideshowDisplayLinkView: NSViewRepresentable {
 
 private let cachedScreenshotScrubberTimeFormatter: DateFormatter = {
   let formatter = DateFormatter()
-  formatter.timeStyle = .short
+  formatter.dateFormat = "HH:mm"
   return formatter
 }()
 

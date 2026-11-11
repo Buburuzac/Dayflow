@@ -11,7 +11,7 @@ const SHARES: ShareLevel[] = ['time', 'cards', 'detailed']
 export const ROLES: WorkspaceRole[] = ['owner', 'admin', 'member', 'viewer']
 
 const fmtDate = (v: number | string) =>
-  new Date(typeof v === 'string' ? Date.parse(v) : toMs(v)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+  new Date(typeof v === 'string' ? Date.parse(v) : toMs(v)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
 
 const numOrUndef =(s: string) => (s.trim() === '' || !Number.isFinite(Number(s)) ? undefined : Math.trunc(Number(s)))
 

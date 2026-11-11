@@ -2,14 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppStatus, BatchInfo, ScreenshotInfo, SettingsWithSecrets, TimelineCard } from '../../shared/types.ts'
 import type { ProjectView } from '../../shared/sync-ui.ts'
 import { CardSyncSection, ProjectCluster } from './features/CardProjects.tsx'
-import { detailLines } from '../../shared/detailed.ts'
+import { clockText24, detailLines } from '../../shared/detailed.ts'
 import { initialDetailProjects, projectRecords } from '../../shared/detail-projects.ts'
 import { useProjects } from './features/Sync.tsx'
 import { DayGoalHeader } from './features/DayGoals.tsx'
 import { ipcErrorMessage } from './Settings.tsx'
 import { ReviewPromptButton } from './features/Review.tsx'
 import { TimelapseButton } from './features/Timelapse.tsx'
-import { currentDay, dayLabel, dayStart, fmtDuration, shiftDay } from './dates.ts'
+import { clock24, currentDay, dayLabel, dayStart, fmtDuration, shiftDay } from './dates.ts'
 import { crossDeviceOverlapIds } from './timeline-layout.ts'
 
 const PX_PER_MIN = 2.2
@@ -200,7 +200,7 @@ export function TimelineView({
                       {c.title}
                     </span>
                     <span className="card-time">
-                      {c.startTime} – {c.endTime}
+                      {clock24(c.startTs)} – {clock24(c.endTs)}
                     </span>
                     {height > 120 && c.summary && <span className="card-summary">{c.summary}</span>}
                     {favicon && <Favicon domain={favicon} />}
@@ -230,9 +230,7 @@ export function TimelineView({
 function hourLabel(h: number): string {
   // Hours are relative to the 4 AM day start.
   const real = (h + 4) % 24
-  const ampm = real >= 12 ? 'PM' : 'AM'
-  const h12 = real % 12 === 0 ? 12 : real % 12
-  return `${h12} ${ampm}`
+  return `${String(real).padStart(2, '0')}:00`
 }
 
 function Favicon({ domain }: { domain: string }) {
@@ -299,7 +297,7 @@ function CardDetail({ card, color, categories }: { card: TimelineCard; color: st
           </select>
         </span>
         <span className="detail-time">
-          {card.startTime} – {card.endTime} · {fmtDuration(card.endTs - card.startTs)}
+          {clock24(card.startTs)} – {clock24(card.endTs)} · {fmtDuration(card.endTs - card.startTs)}
         </span>
       </div>
       <EditableTitle card={card} />
@@ -321,7 +319,7 @@ function CardDetail({ card, color, categories }: { card: TimelineCard; color: st
               }}
             />
             <span className="viewer-time">
-              {new Date(shot.capturedAt * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+              {clock24(shot.capturedAt)}
             </span>
           </div>
         </div>
@@ -340,7 +338,7 @@ function CardDetail({ card, color, categories }: { card: TimelineCard; color: st
             {card.distractions.map((d, i) => (
               <li key={i}>
                 <span className="detail-time">
-                  {d.startTime} – {d.endTime}
+                  {clockText24(d.startTime) ?? d.startTime} – {clockText24(d.endTime) ?? d.endTime}
                 </span>{' '}
                 <b>{d.title}</b>
                 {d.summary && <div>{d.summary}</div>}

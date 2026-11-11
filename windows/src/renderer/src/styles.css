@@ -130,6 +130,8 @@ h1 {
 .pill-wrap {
   position: relative;
 }
+.recording-identity { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px 0; color: #727272; font-size: 10px; line-height: 1.3; }
+.recording-identity span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pill {
   width: 100%;
   display: flex;

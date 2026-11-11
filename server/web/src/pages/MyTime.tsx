@@ -10,7 +10,7 @@ import { axisHour, clock, dayLabel, daysInRange, logicalDay, minuteOfDay, shortD
 import { fmtMinutes } from '../lib/format.ts'
 import { useAsync } from '../lib/hooks.ts'
 import { groupByDevice, hourWindow, layoutLane } from '../lib/lanes.ts'
-import { detailLines } from '../../../../windows/src/shared/detailed.ts'
+import { clockText24, detailLines } from '../../../../windows/src/shared/detailed.ts'
 
 const PX_PER_MIN = 1.6
 
@@ -22,6 +22,10 @@ interface Positioned {
 }
 
 const cardMinutes = (c: TimelineCard) => Math.max(0, (toMs(c.endTs) - toMs(c.startTs)) / 60000)
+
+function ProjectFolderIcon() {
+  return <span className="project-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M1.5 3.5h5l1.5 2h6.5v7h-13z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" /></svg></span>
+}
 
 function EntryProjects({ card, rowKey, project }: { card: TimelineCard; rowKey: string; project: Lookup }) {
   const map = card.metadata?.detailProjects as Record<string, { projectId: string; confirmed: boolean }[]> | undefined
@@ -202,7 +206,7 @@ export function TimelineView({
           ) : range.mode === 'day' ? (
             <DayLanes day={range.range.from} cards={cards} devices={devices} color={cardColor} project={project} selected={selected} onSelect={setSelected} />
           ) : (
-            <WeekLanes days={daysInRange(range.range.from, range.range.to)} cards={cards} devices={devices} color={cardColor} selected={selected} onSelect={setSelected} />
+            <WeekLanes days={daysInRange(range.range.from, range.range.to)} cards={cards} devices={devices} color={cardColor} project={project} selected={selected} onSelect={setSelected} />
           )}
         </div>
         {sel && <CardDetail card={sel} color={cardColor} devices={allDevices} project={project} onClose={() => setSelected(null)} />}
@@ -257,7 +261,7 @@ function DayLanes({ day, cards, devices, color, project, selected, onSelect }: {
                         {clock(c.startTs)} – {clock(c.endTs)}
                       </span>
                     )}
-                    {c.projects.length > 0 && <span className="project-cluster" title="Open project time breakdown">{c.projects.slice(0, 4).map((p) => { const pr = project(p.projectId); return <span key={p.projectId} className={`project-mark ${p.confirmed ? '' : 'unconfirmed'}`} style={{ ['--proj' as string]: pr.color }} title={`${pr.name} · ${Math.round(p.share * 100)}%`}>{pr.icon ?? ''}</span> })}{c.projects.length > 4 && <b>+{c.projects.length - 4}</b>}</span>}
+                    {c.projects.length > 0 && <span className="project-cluster" title={c.projects.map((p) => `${project(p.projectId).name}: ${Math.round(p.share * 100)}%${p.confirmed ? '' : ' · suggested'}`).join('\n')}><ProjectFolderIcon /></span>}
                   </button>
                 )
               })}
@@ -269,7 +273,7 @@ function DayLanes({ day, cards, devices, color, project, selected, onSelect }: {
   )
 }
 
-function WeekLanes({ days, cards, devices, color, selected, onSelect }: { days: string[]; cards: TimelineCard[]; devices: DeviceInfo[]; color: (card: TimelineCard) => string; selected: string | null; onSelect: (id: string) => void }) {
+function WeekLanes({ days, cards, devices, color, project, selected, onSelect }: { days: string[]; cards: TimelineCard[]; devices: DeviceInfo[]; color: (card: TimelineCard) => string; project: Lookup; selected: string | null; onSelect: (id: string) => void }) {
   const all = cards.map((c) => {
     const day = logicalDay(new Date(toMs(c.startTs)))
     return { id: c.id, day, start: minuteOfDay(c.startTs, day), end: minuteOfDay(c.endTs, day), card: c, deviceId: c.deviceId }
@@ -321,9 +325,10 @@ function WeekLanes({ days, cards, devices, color, selected, onSelect }: { days: 
                           ['--cat' as string]: color(item.card),
                         }}
                         onClick={() => onSelect(item.id)}
-                        title={`${item.card.title} · ${clock(item.card.startTs)}–${clock(item.card.endTs)}`}
+                        title={`${item.card.title} · ${clock(item.card.startTs)}–${clock(item.card.endTs)}${item.card.projects.length ? `\n${item.card.projects.map((p) => `${project(p.projectId).name}: ${Math.round(p.share * 100)}%`).join('\n')}` : ''}`}
                       >
                         <span>{item.card.title}</span>
+                        {item.card.projects.length > 0 && <ProjectFolderIcon />}
                       </button>
                     ))}
                   </div>
@@ -347,6 +352,17 @@ function WeekLanes({ days, cards, devices, color, selected, onSelect }: { days: 
 function CardDetail({ card, color, devices, project, onClose }: { card: TimelineCard; color: (card: TimelineCard) => string; devices: DeviceInfo[]; project: Lookup; onClose: () => void }) {
   const device = devices.find((d) => d.id === card.deviceId)
   const md = card.metadata ?? {}
+  const detailAssignments = md.detailProjects as Record<string, { projectId: string }[]> | undefined
+  const ownBreakdown = detailAssignments && Object.keys(detailAssignments).length
+    ? detailLines(card.detailedSummary).map((row, i) => {
+        const refs = detailAssignments[`detail:${i}`] ?? []
+        return { line: row.raw, scope: refs.length ? 'project' : 'out-of-scope', projects: refs.map((ref) => ref.projectId) }
+      })
+    : []
+  const mixedOwnBreakdown = ownBreakdown.some((row) => row.scope === 'project') && ownBreakdown.some((row) => row.scope === 'out-of-scope')
+  const summaryBreakdown = Array.isArray(md.summaryBreakdown)
+    ? md.summaryBreakdown as { line: string; scope: string; projects: string[] }[]
+    : mixedOwnBreakdown ? ownBreakdown : null
   const distractions = Array.isArray(md.distractions) ? (md.distractions as { title?: string; summary?: string; startTime?: string; endTime?: string }[]) : []
   const sites = (md.appSites ?? null) as { primary?: string | null; secondary?: string | null } | null
   return (
@@ -398,10 +414,13 @@ function CardDetail({ card, color, devices, project, onClose }: { card: Timeline
             </div>
           </>
         )}
-        {card.summary && (
+        {(card.summary || summaryBreakdown) && (
           <>
             <h3>Summary</h3>
-            <p className="summary">{card.summary}</p>
+            {summaryBreakdown ? <div className="detailed-lines">{summaryBreakdown.map((row, i) => {
+              const parsed = detailLines(row.line)[0]
+              return <div key={i} className="detailed-line"><b>{row.scope === 'out-of-scope' ? 'Out of scope' : row.projects.map((id) => project(id).name).join(', ')}</b>: {parsed?.start ? <><strong>{parsed.start}–{parsed.end}</strong>: {parsed.text}</> : row.line}</div>
+            })}</div> : <p className="summary">{card.summary}</p>}
           </>
         )}
         {card.detailedSummary && (
@@ -416,7 +435,7 @@ function CardDetail({ card, color, devices, project, onClose }: { card: Timeline
             <ul className="distractions">
               {distractions.map((d, i) => (
                 <li key={i}>
-                  <b>{d.title}</b> {d.startTime && <span className="muted">{d.startTime}–{d.endTime}</span>}
+                  <b>{d.title}</b> {d.startTime && <span className="muted">{clockText24(d.startTime) ?? d.startTime}–{clockText24(d.endTime ?? '') ?? d.endTime}</span>}
                   {d.summary && <div className="muted">{d.summary}</div>}
                   <EntryProjects card={card} rowKey={`distraction:${i}`} project={project} />
                 </li>

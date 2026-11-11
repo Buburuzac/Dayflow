@@ -14,7 +14,7 @@ final class TimelineReviewTimeCache {
 
   private let formatter: DateFormatter = {
     let f = DateFormatter()
-    f.timeStyle = .short
+    f.dateFormat = "HH:mm"
     return f
   }()
 
@@ -35,7 +35,7 @@ final class TimelineReviewTimeCache {
 
 let cachedReviewTimeFormatter: DateFormatter = {
   let formatter = DateFormatter()
-  formatter.timeStyle = .short
+  formatter.dateFormat = "HH:mm"
   return formatter
 }()
 

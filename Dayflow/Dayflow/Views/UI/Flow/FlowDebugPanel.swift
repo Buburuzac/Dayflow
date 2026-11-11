@@ -10,6 +10,18 @@
 
 import SwiftUI
 
+private let flowClock: DateFormatter = {
+  let f = DateFormatter()
+  f.dateFormat = "HH:mm:ss"
+  return f
+}()
+
+private let flowShortClock: DateFormatter = {
+  let f = DateFormatter()
+  f.dateFormat = "HH:mm"
+  return f
+}()
+
 struct FlowDebugPanel: View {
   @ObservedObject private var agent = FlowDistractionAgent.shared
   @ObservedObject private var settings = FlowAgentSettings.shared
@@ -88,7 +100,7 @@ struct FlowDebugPanel: View {
       if let at = agent.lastTickAt {
         Text(
           verbatim:
-            "last tick " + at.formatted(.dateTime.hour().minute().second())
+            "last tick " + flowClock.string(from: at)
             + (agent.lastTickSeconds.map { String(format: " · %.1fs", $0) } ?? "")
         )
         .font(.system(size: 9, design: .monospaced))
@@ -111,7 +123,7 @@ struct FlowDebugPanel: View {
             }
             ForEach(agent.transcript) { entry in
               VStack(alignment: .leading, spacing: 2) {
-                Text(entry.date, format: .dateTime.hour().minute().second())
+                Text(flowClock.string(from: entry.date))
                   .font(.system(size: 9, design: .monospaced))
                   .foregroundColor(.white.opacity(0.5))
                 Text(entry.text)
@@ -338,7 +350,7 @@ struct FlowDebugPanel: View {
           .truncationMode(.middle)
         Spacer()
         if let at = timeline.updatedAt {
-          Text(verbatim: "updated " + at.formatted(.dateTime.hour().minute().second()))
+          Text(verbatim: "updated " + flowClock.string(from: at))
             .font(.system(size: 9, design: .monospaced))
             .foregroundColor(.white.opacity(0.6))
         }
@@ -363,8 +375,8 @@ struct FlowDebugPanel: View {
             HStack(alignment: .top, spacing: 8) {
               Text(
                 verbatim:
-                  entry.startedAt.formatted(.dateTime.hour().minute()) + "–"
-                  + entry.endedAt.formatted(.dateTime.hour().minute())
+                  flowShortClock.string(from: entry.startedAt) + "–"
+                  + flowShortClock.string(from: entry.endedAt)
               )
               .font(.system(size: 10, design: .monospaced))
               .foregroundColor(.white.opacity(0.6))

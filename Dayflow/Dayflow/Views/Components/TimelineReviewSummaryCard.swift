@@ -291,7 +291,7 @@ struct TimelineReviewSummaryCard: View {
 
   private static let timeFormatter: DateFormatter = {
     let formatter = DateFormatter()
-    formatter.timeStyle = .short
+    formatter.dateFormat = "HH:mm"
     return formatter
   }()
 }

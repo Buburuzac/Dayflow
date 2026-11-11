@@ -212,7 +212,7 @@ function updateTray(): void {
   const label =
     st === 'paused'
       ? recorder.pausedUntil
-        ? `Paused until ${new Date(recorder.pausedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+        ? `Paused until ${new Date(recorder.pausedUntil).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}`
         : 'Paused'
       : st === 'locked'
         ? 'Screen locked — not recording'
@@ -302,7 +302,7 @@ function registerIpc(): void {
       return { ok: false, message: err instanceof Error ? err.message : String(err) }
     }
   })
-  ipcMain.handle('cards:get', (_e, day: string) => new SyncRepo(store).attachProjects(store.cardsForDay(day)))
+  ipcMain.handle('cards:get', (_e, day: string) => new SyncRepo(store).attachProjects(store.cardsForDay(day, true)))
   ipcMain.handle('cards:screenshots', (_e, id: number) => {
     const card = store.getCard(id)
     // Cards pulled from another device have no screenshots here (frames never leave a PC).
@@ -439,4 +439,3 @@ app.on('before-quit', () => {
 app.on('will-quit', () => store?.close())
 // Keep running in the tray when the window is closed.
 app.on('window-all-closed', () => {})
-

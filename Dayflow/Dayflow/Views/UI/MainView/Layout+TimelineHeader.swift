@@ -97,6 +97,22 @@ private struct TimelineNavigationButton: View {
   }
 }
 
+private struct RecordingIdentity: View {
+  @ObservedObject private var sync = SyncCenter.shared
+
+  var body: some View {
+    if sync.status.signedIn, let email = sync.status.user?.email {
+      VStack(alignment: .trailing, spacing: 1) {
+        Text(email).help(email)
+        Text(sync.status.deviceName).help(sync.status.deviceName)
+      }
+      .font(.custom("Figtree", size: 10))
+      .foregroundStyle(.secondary)
+      .lineLimit(1)
+    }
+  }
+}
+
 extension MainView {
   // Priority-based responsive layout.
   //
@@ -126,7 +142,7 @@ extension MainView {
       timelineTrailingControls
         .trackTimelineHeaderTrailingWidth()
     }
-    .frame(height: 36)
+    .frame(height: 60)
     .padding(.horizontal, 10)
     .onPreferenceChange(TimelineHeaderTrailingWidthPreferenceKey.self) { width in
       timelineHeaderTrailingWidth = width
@@ -233,7 +249,10 @@ extension MainView {
       if dailyBrief.isFeatureEnabled {
         dailyBriefButton
       }
-      PausePillView()
+      VStack(alignment: .trailing, spacing: 2) {
+        PausePillView()
+        RecordingIdentity()
+      }
     }
   }
 

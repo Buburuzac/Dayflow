@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ProjectEntry, ProjectReport, ShareLevel, TimesheetProposal, TimesheetSubmitResult, WorkspaceInfo } from '../../../shared/sync-types.ts'
 import type { ProjectDraft, ProjectView, SyncStatus, TimesheetProposalsView } from '../../../shared/sync-ui.ts'
 import { ipcErrorMessage } from '../Settings.tsx'
-import { currentDay, shiftDay } from '../dates.ts'
+import { clock24, currentDay, shiftDay } from '../dates.ts'
+import { detailLines } from '../../../shared/detailed.ts'
 import { useProjects, useSyncStatus } from './Sync.tsx'
 import './sync.css'
 
@@ -28,7 +29,7 @@ const hm = (minutes: number) => {
   const m = Math.round(minutes % 60)
   return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`
 }
-const clock = (ts: number) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+const clock = clock24
 
 type Range = 'today' | 'week' | 'month' | 'custom'
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -525,7 +526,7 @@ function ActivityPanel({ projects }: { projects: ProjectView[] }) {
               <span className="feed-text">
                 {e.title ? <b>{e.title}</b> : <span className="muted">{hm(e.minutes)} of work</span>}
                 {e.summary && <div className="muted">{e.summary}</div>}
-                {e.detailed && <pre className="detailed">{e.detailed}</pre>}
+                {e.detailed && <div className="detailed">{detailLines(e.detailed).map((line, i) => <div key={i}>{line.start ? <><strong>{line.start}–{line.end}</strong>: {line.text}</> : line.text}</div>)}</div>}
               </span>
               <span className="feed-min">{hm(e.minutes)}</span>
             </div>

@@ -40,7 +40,7 @@ struct ActivityCard: View {
 
   private let timeFormatter: DateFormatter = {
     let formatter = DateFormatter()
-    formatter.timeStyle = .short
+    formatter.dateFormat = "HH:mm"
     return formatter
   }()
 

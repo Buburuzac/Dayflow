@@ -494,6 +494,10 @@ extension StorageManager {
   }
 
   func fetchTimelineCards(forDay day: String) -> [TimelineCard] {
+    fetchTimelineCards(forDay: day, localOnly: false)
+  }
+
+  func fetchTimelineCards(forDay day: String, localOnly: Bool) -> [TimelineCard] {
     let decoder = JSONDecoder()
 
     guard let dayDate = dateFormatter.date(from: day) else {
@@ -527,8 +531,9 @@ extension StorageManager {
               SELECT * FROM timeline_cards
               WHERE start_ts >= ? AND start_ts < ?
                 AND is_deleted = 0
+                AND (? = 0 OR \(SyncLocal.shared.localOnlySQL))
               ORDER BY start_ts ASC, start ASC
-          """, arguments: [startTs, endTs]
+          """, arguments: [startTs, endTs, localOnly ? 1 : 0, SyncLocal.shared.localArgument]
       )
       .map { row in
         // Decode metadata JSON (supports object or legacy array)

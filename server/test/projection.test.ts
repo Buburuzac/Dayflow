@@ -151,8 +151,14 @@ describe('project_entries projection', () => {
     assert.deepEqual(e.distractions, [{ title: 'review' }])
     const timeline = await api(t, owner, 'GET', `/api/workspaces/${wsId}/members/${member.userId}/timeline?from=2026-11-02&to=2026-11-02`)
     const visible = timeline.body.cards.find((c: any) => c.id === id)
+    assert.equal(visible.title, 'Project work / Out of scope')
+    assert.equal(visible.summary, '')
     assert.equal(visible.detailedSummary, '18:00 - 18:15: project work')
     assert.deepEqual(visible.metadata.distractions, [{ title: 'review' }])
+    assert.deepEqual(visible.metadata.summaryBreakdown, [
+      { scope: 'project', projects: [projectId], line: '18:00 - 18:15: project work' },
+      { scope: 'out-of-scope', projects: [], line: '18:15 - 18:30' },
+    ])
     const edited = member.hlc()
     metadata.detailProjects['detail:1'] = [{ projectId, share: 1, confirmed: true }]
     await pushAs(t, member, [

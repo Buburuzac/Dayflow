@@ -9,6 +9,7 @@ import { clock, dayLabel, daysInRange, logicalDay, minuteOfDay, rangeFor, shortD
 import { fmtMinutes } from '../lib/format.ts'
 import { navigate, useAsync } from '../lib/hooks.ts'
 import { hourWindow } from '../lib/lanes.ts'
+import { detailLines } from '../../../../windows/src/shared/detailed.ts'
 
 type Tab = 'feed' | 'report' | 'standup'
 
@@ -135,7 +136,7 @@ function MemberEntries({ day, entries, color }: { day: string; entries: ProjectE
                 {e.detailed != null && (
                   <details>
                     <summary>Details</summary>
-                    <pre className="detailed">{e.detailed}</pre>
+                    <div className="detailed">{detailLines(e.detailed).map((line, i) => <div key={i}>{line.start ? <><strong>{line.start}–{line.end}</strong>: {line.text}</> : line.text}</div>)}</div>
                   </details>
                 )}
                 {e.title == null && e.summary == null && <div className="muted">Time only</div>}

@@ -31,7 +31,7 @@ export const clamp01 = (v: number) => Math.max(0, Math.min(1, v))
 export function shortTime(minute: number): string {
   const m = Math.round(minute)
   const d = new Date(2000, 0, 1, Math.floor(m / 60) % 24, m % 60)
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 export function slug(s: string): string {

@@ -396,7 +396,15 @@ export async function teamRoutes(app: FastifyInstance, ctx: Ctx) {
         const refs = c.metadata?.detailProjects
         const hasRows = refs && typeof refs === 'object' && !Array.isArray(refs) && Object.keys(refs).length > 0
         const selectedRefs = (key: string) => Array.isArray(refs?.[key]) ? refs[key].filter((v: any) => v && v.confirmed === true && allowed.has(v.projectId)) : []
-        const visibleLines = String(c.detailed_summary).split('\n').filter((line) => line.trim()).map((line, i) => ({ line, refs: selectedRefs(`detail:${i}`) })).filter((x) => !hasRows || x.refs.length)
+        const allLines = String(c.detailed_summary).split('\n').filter((line) => line.trim()).map((line, i) => ({ line, refs: selectedRefs(`detail:${i}`) }))
+        const visibleLines = allLines.filter((x) => !hasRows || x.refs.length)
+        const mixedScope = hasRows && allLines.some((x) => x.refs.length > 0) && allLines.some((x) => x.refs.length === 0)
+        const summaryBreakdown = mixedScope ? allLines.map((x) => ({
+          scope: x.refs.length ? 'project' : 'out-of-scope',
+          projects: x.refs.map((r: { projectId: string }) => r.projectId),
+          // Admins can see the time of unrelated work, never its description.
+          line: x.refs.length && level === 'detailed' ? x.line : (x.line.match(/^\s*\d{1,2}:\d{2}\s*(?:AM|PM)?\s*[-–—]\s*\d{1,2}:\d{2}\s*(?:AM|PM)?/i)?.[0] ?? ''),
+        })) : undefined
         const visibleDistractions = (Array.isArray(c.metadata?.distractions) ? c.metadata.distractions : []).map((item: unknown, i: number) => ({ item, refs: selectedRefs(`distraction:${i}`) })).filter((x: { refs: unknown[] }) => !hasRows || x.refs.length)
         const detailProjects = hasRows ? Object.fromEntries([
           ...visibleLines.map((x, i) => [`detail:${i}`, x.refs]),
@@ -408,12 +416,12 @@ export async function teamRoutes(app: FastifyInstance, ctx: Ctx) {
           day: c.day,
           startTs: c.start_ts,
           endTs: c.end_ts,
-          title: !link ? (c.category === 'Idle' ? 'Idle' : 'Out of scope') : shown ? c.title : link.projects.map((p) => p.projectName).join(', '),
-          summary: shown ? c.summary : '',
+          title: !link ? (c.category === 'Idle' ? 'Idle' : 'Out of scope') : shown ? (mixedScope ? 'Project work / Out of scope' : c.title) : link.projects.map((p) => p.projectName).join(', '),
+          summary: shown && !mixedScope ? c.summary : '',
           detailedSummary: level === 'detailed' ? visibleLines.map((x) => x.line).join('\n') : '',
           category: !link ? (c.category === 'Idle' ? 'Idle' : 'Out of scope') : shown ? c.category : '',
           subcategory: shown ? c.subcategory : '',
-          metadata: level === 'detailed' ? { distractions: visibleDistractions.map((x: { item: unknown }) => x.item), ...(detailProjects ? { detailProjects } : {}) } : {},
+          metadata: level === 'detailed' ? { distractions: visibleDistractions.map((x: { item: unknown }) => x.item), ...(detailProjects ? { detailProjects } : {}), ...(summaryBreakdown ? { summaryBreakdown } : {}) } : (level === 'cards' && summaryBreakdown ? { summaryBreakdown } : {}),
           isError: false,
           projects: link?.projects ?? [],
           shareLevel: level,

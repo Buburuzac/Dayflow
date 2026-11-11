@@ -54,7 +54,8 @@ enum TimelineActivityLoader {
   ) -> (dayString: String, timelineDate: Date, activities: [TimelineActivity]) {
     let timelineDate = timelineDisplayDate(from: selectedDate, now: now)
     let dayString = DateFormatter.yyyyMMdd.string(from: timelineDate)
-    let cards = storageManager.fetchTimelineCards(forDay: dayString)
+    let cards = (storageManager as? StorageManager)?.fetchTimelineCards(forDay: dayString, localOnly: true)
+      ?? storageManager.fetchTimelineCards(forDay: dayString)
     let visibleCards = displayableCards(cards, storageManager: storageManager)
     return (dayString, timelineDate, buildActivities(from: visibleCards))
   }
@@ -63,8 +64,9 @@ enum TimelineActivityLoader {
     in weekRange: TimelineWeekRange,
     storageManager: StorageManaging = StorageManager.shared
   ) -> [TimelineActivity] {
-    let cards = storageManager.fetchTimelineCardsByTimeRange(
-      from: weekRange.weekStart, to: weekRange.weekEnd)
+    let cards = (storageManager as? StorageManager)?.fetchTimelineCardsByTimeRange(
+      from: weekRange.weekStart, to: weekRange.weekEnd, localOnly: true)
+      ?? storageManager.fetchTimelineCardsByTimeRange(from: weekRange.weekStart, to: weekRange.weekEnd)
     return buildActivities(from: displayableCards(cards, storageManager: storageManager))
   }
 

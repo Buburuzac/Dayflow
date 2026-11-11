@@ -290,6 +290,8 @@ test('sync loop: two devices of one user exchange cards, edits, projects and doc
     await A.svc.syncNow()
     await B.svc.syncNow()
     assert.deepEqual(B.store.cardsForDay('2026-11-08').map((c) => c.title).sort(), ['Desktop: sync design v2', 'Laptop: email'])
+    assert.deepEqual(A.store.cardsForDay('2026-11-08', true).map((c) => c.title), ['Desktop: sync design v2'])
+    assert.deepEqual(B.store.cardsForDay('2026-11-08', true).map((c) => c.title), ['Laptop: email'])
 
     // Admin creates a project on A; B receives it. Manual assignment + private flag sync too.
     const wsId = REAL_SERVER ? (await A.svc.me()).workspaces[0].id : 'ws-1'
