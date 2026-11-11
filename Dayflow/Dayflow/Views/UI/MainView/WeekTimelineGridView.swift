@@ -860,7 +860,9 @@ struct WeekTimelineGridView: View {
     }
     let fallback = categoryStore.categories.first ?? CategoryPersistence.defaultCategories.first!
     let category = matched ?? fallback
-    let accent = Color(nsColor: NSColor(hex: category.colorHex) ?? .systemBlue)
+    // "Out of scope" blocks synced from other devices have no CategoryStore entry: neutral grey.
+    let accentHex = syncFixedCategoryColorHex(rawCategory) ?? category.colorHex
+    let accent = Color(nsColor: NSColor(hex: accentHex) ?? .systemBlue)
 
     return WeekTimelineCardPalette(
       accent: accent,

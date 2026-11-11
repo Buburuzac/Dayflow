@@ -100,7 +100,8 @@ export function buildChange(
         distractions: Array.isArray(meta.distractions) ? meta.distractions : [],
         appSites: meta.appSites ?? null,
       }
-      if (meta.private === true) metadata.private = true
+      // Always a boolean: the server ignores a missing value, so un-marking would never reach it.
+      metadata.private = meta.private === true
       if (local) metadata.windowApps = windowApps(store, startTs, endTs)
       else if (Array.isArray(meta.windowApps)) metadata.windowApps = meta.windowApps
       let data: CardData = {
@@ -137,10 +138,8 @@ export function buildChange(
         if (changed) scopeHlc = store.tick() // must beat the copy the server already holds
         const uuid = e.entityId
         const recorded = scopeHlc
-        // Recorded only once the server has accepted this upload.
-        onSent(() =>
-          store.db.prepare('UPDATE timeline_cards SET sync_scope = ?, scope_hlc = ? WHERE uuid = ?').run(scope, recorded || null, uuid),
-        )
+        // Fields whose clock the scope bumped, with the clock sent for each.
+        const sentClocks: Record<string, string> = {}
         if (scopeHlc) {
           // Analysis fields (summaries, metadata) must replace the server's copy.
           if (scopeHlc > recordHlc) recordHlc = scopeHlc
@@ -148,8 +147,29 @@ export function buildChange(
           // to anything else keep their place in the per-field merge.
           const bumped: string[] = ['title', 'category', 'subcategory']
           if (scope === 'excluded' || (changed && sent === 'excluded')) bumped.push('deleted')
-          for (const f of bumped) if (scopeHlc > fieldHlc[f]) fieldHlc[f] = scopeHlc
+          for (const f of bumped) {
+            if (scopeHlc > fieldHlc[f]) fieldHlc[f] = scopeHlc
+            sentClocks[f] = fieldHlc[f]
+          }
         }
+        // Recorded only once the server has accepted this upload. The bumped field clocks are
+        // recorded locally too (local = max(local, sent)): after a sign-out → sign-in this device
+        // gets a new id, and our own scoped echoes (clocked with the old id) must not look newer
+        // than the real local title/category/deleted flag.
+        onSent(() => {
+          const cur = store.db.prepare('SELECT field_hlc FROM timeline_cards WHERE uuid = ?').get(uuid) as
+            | { field_hlc: string | null }
+            | undefined
+          if (!cur) return
+          const fh = parseJsonObject(cur.field_hlc)
+          for (const [f, h] of Object.entries(sentClocks)) {
+            const local = typeof fh[f] === 'string' ? (fh[f] as string) : ''
+            if (h > local) fh[f] = h
+          }
+          store.db
+            .prepare('UPDATE timeline_cards SET sync_scope = ?, scope_hlc = ?, field_hlc = ? WHERE uuid = ?')
+            .run(scope, recorded || null, JSON.stringify(fh), uuid)
+        })
         data = redactCard(data, scope)
       }
       // The server requires the change clock to carry this device's id: for our own card that is
@@ -157,7 +177,9 @@ export function buildChange(
       const mine = Object.values(fieldHlc).filter((h) => h.endsWith(`-${me}`))
       const hlc = local ? recordHlc : maxHlc(mine) || store.tick()
       const ch: SyncChange = { entity: 'card', id: e.entityId, deviceId: me, hlc, data: data as unknown as Record<string, unknown>, fieldHlc }
-      if (Number(r.is_deleted) === 1 || scope === 'excluded') ch.deleted = true
+      // Always a boolean: the server skips an absent value, so a card leaving the "excluded" scope
+      // would otherwise stay deleted there forever.
+      ch.deleted = Number(r.is_deleted) === 1 || scope === 'excluded'
       return ch
     }
     case 'observation': {
@@ -176,7 +198,12 @@ export function buildChange(
       const reviveHlc = typeof t.revive === 'string' ? t.revive : null
       const data: ObservationData = { userId, startTs: Number(r.start_ts), endTs: Number(r.end_ts), text: String(r.observation) }
       const uuid = e.entityId
-      onSent(() => store.db.prepare('UPDATE observations SET uploaded = 1 WHERE uuid = ?').run(uuid))
+      onSent(() => {
+        store.db.prepare('UPDATE observations SET uploaded = 1 WHERE uuid = ?').run(uuid)
+        // Upload was switched off while this push was in flight: the switch-off tombstones missed
+        // it (it was not uploaded yet), so remove the text from the server right away.
+        if (!store.syncPolicy.observations) store.enqueue('observation', uuid, JSON.stringify({ deleted: true, hlc: store.tick() }))
+      })
       return {
         entity: 'observation',
         id: e.entityId,
@@ -262,6 +289,10 @@ export function buildBatch(
 ): BuiltBatch {
   const out: BuiltBatch = { used: [], changes: [], dropped: [], commits: [] }
   let bytes = 20
+  // The server reports rejections by id only, and a standup and a day goal of one day share their
+  // id ("<user>:<day>"). Two changes with the same id never go in one batch: the later one stays
+  // queued for the next batch, so every rejection matches exactly one change.
+  const ids = new Set<string>()
   for (const e of entries) {
     if (out.changes.length >= maxChanges) break
     let ch: SyncChange | null = null
@@ -275,12 +306,29 @@ export function buildBatch(
       out.dropped.push(e)
       continue
     }
+    if (ids.has(ch.id)) continue
     const size = JSON.stringify(ch).length + 1
     if (out.changes.length > 0 && bytes + size > maxBytes) break
     bytes += size
+    ids.add(ch.id)
     out.used.push(e)
     out.changes.push(ch)
     out.commits.push(commits)
+  }
+  return out
+}
+
+/**
+ * Matches the server's rejections ({id, reason}, no entity) to the batch's changes, one rejection per
+ * change: a rejected id marks the first not yet matched change with that id. Returns the reason per
+ * change index (undefined = accepted).
+ */
+export function matchRejections(changes: SyncChange[], rejected: { id: string; reason: string }[]): (string | undefined)[] {
+  const out: (string | undefined)[] = changes.map(() => undefined)
+  for (const r of rejected) {
+    if (!r || typeof r.id !== 'string') continue
+    const i = changes.findIndex((c, j) => c.id === r.id && out[j] === undefined)
+    if (i >= 0) out[i] = typeof r.reason === 'string' ? r.reason : 'rejected'
   }
   return out
 }
@@ -303,6 +351,11 @@ const RESCOPE_WINDOW_DAYS = 31
  */
 export function rescopeCards(store: Store, nowSec = Math.floor(Date.now() / 1000)): number {
   const since = nowSec - RESCOPE_WINDOW_DAYS * 86400
+  // Older cards sent before are only re-checked when something that decides a scope changed
+  // (Store.scopeDirty: policy, projects, assignments, private/category edits); otherwise only the
+  // window, where new cards appear.
+  const full = store.scopeDirty
+  store.scopeDirty = false
   // One query: the per-card project check runs inside SQLite, not as a query per card.
   const rows = store.db
     .prepare(
@@ -312,9 +365,9 @@ export function rescopeCards(store: Store, nowSec = Math.floor(Date.now() / 1000
                          AND p.deleted = 0 AND p.archived = 0) AS has_project
          FROM timeline_cards c
         WHERE c.uuid IS NOT NULL AND (c.device_id IS NULL OR c.device_id = ?) AND c.category != ?
-          AND (c.start_ts >= ? OR c.sync_scope IS NOT NULL)`,
+          AND (c.start_ts >= ? OR (? = 1 AND c.sync_scope IS NOT NULL))`,
     )
-    .all(store.deviceId, ERROR_CATEGORY, since) as Record<string, unknown>[]
+    .all(store.deviceId, ERROR_CATEGORY, since, full ? 1 : 0) as Record<string, unknown>[]
   let n = 0
   for (const r of rows) {
     const meta = parseJsonObject(r.metadata)

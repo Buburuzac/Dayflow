@@ -26,7 +26,8 @@ extension StorageManager {
     let startTs = Int(dayStart.timeIntervalSince1970)
     let endTs = Int(dayEnd.timeIntervalSince1970)
 
-    // Sum total duration of timeline cards for the day
+    // Sum total duration of this device's timeline cards for the day (other devices' cards
+    // from Dayflow Sync overlap this Mac's time and would be counted twice).
     let totalMinutes: Int? = try? timedRead("hasMinimumTimelineActivity") { db in
       // Calculate sum of (end_ts - start_ts) for all cards, converted to minutes
       let result = try Int.fetchOne(
@@ -36,7 +37,8 @@ extension StorageManager {
               FROM timeline_cards
               WHERE start_ts >= ? AND start_ts < ?
                 AND is_deleted = 0
-          """, arguments: [startTs, endTs])
+                AND \(SyncLocal.shared.localOnlySQL)
+          """, arguments: [startTs, endTs, SyncLocal.shared.localArgument])
       return result
     }
 
@@ -168,6 +170,7 @@ extension StorageManager {
           card.summary, card.category, card.subcategory, card.detailedSummary, metadataString,
         ])
       lastId = db.lastInsertedRowID
+      SyncLocal.shared.cardInserted(db, id: db.lastInsertedRowID)
     }
     return lastId
   }
@@ -218,10 +221,16 @@ extension StorageManager {
           """,
         arguments: [recordId]
       )
+      SyncLocal.shared.cardEdited(db, id: recordId, fields: [.deleted])
+      // Another device's card has no observations here; this device's analysis input stays.
+      guard SyncLocal.shared.isLocalCard(db, id: recordId) else { return }
 
       guard endTs > startTs else { return }
 
       if let batchId {
+        SyncLocal.shared.observationsWillDelete(
+          db, where: "batch_id = ? AND ((start_ts < ? AND end_ts > ?) OR (start_ts >= ? AND start_ts < ?))",
+          arguments: [batchId, endTs, startTs, startTs, endTs])
         try db.execute(
           sql: """
                 DELETE FROM observations
@@ -232,13 +241,19 @@ extension StorageManager {
           arguments: [batchId, endTs, startTs, startTs, endTs]
         )
       } else {
+        SyncLocal.shared.observationsWillDelete(
+          db,
+          where:
+            "((start_ts < ? AND end_ts > ?) OR (start_ts >= ? AND start_ts < ?)) AND \(SyncLocal.shared.localOnlySQL)",
+          arguments: [endTs, startTs, startTs, endTs, SyncLocal.shared.localArgument])
         try db.execute(
           sql: """
                 DELETE FROM observations
-                WHERE (start_ts < ? AND end_ts > ?)
-                   OR (start_ts >= ? AND start_ts < ?)
+                WHERE ((start_ts < ? AND end_ts > ?)
+                   OR (start_ts >= ? AND start_ts < ?))
+                  AND \(SyncLocal.shared.localOnlySQL)
             """,
-          arguments: [endTs, startTs, startTs, endTs]
+          arguments: [endTs, startTs, startTs, endTs, SyncLocal.shared.localArgument]
         )
       }
     }
@@ -273,6 +288,8 @@ extension StorageManager {
                   category = COALESCE(?, category)
               WHERE id = ?
           """, arguments: [title, category, cardId])
+      SyncLocal.shared.cardEdited(
+        db, id: cardId, fields: (title != nil ? [CardUserField.title] : []) + (category != nil ? [CardUserField.category] : []))
     }
   }
 
@@ -340,6 +357,7 @@ extension StorageManager {
           "",  // detailed_summary - empty string (not NULL, as GRDB decode expects non-optional)
           metadataString,
         ])
+      SyncLocal.shared.cardInserted(db, id: db.lastInsertedRowID)
     }
   }
 
@@ -553,6 +571,12 @@ extension StorageManager {
   }
 
   func fetchTimelineCardsByTimeRange(from: Date, to: Date) -> [TimelineCard] {
+    fetchTimelineCardsByTimeRange(from: from, to: to, localOnly: false)
+  }
+
+  /// `localOnly`: only this device's cards (Dayflow Sync) — for analysis input, which must never
+  /// see or rewrite cards pulled from the user's other devices.
+  func fetchTimelineCardsByTimeRange(from: Date, to: Date, localOnly: Bool) -> [TimelineCard] {
     let decoder = JSONDecoder()
     let fromTs = Int(from.timeIntervalSince1970)
     let toTs = Int(to.timeIntervalSince1970)
@@ -570,8 +594,9 @@ extension StorageManager {
               WHERE ((start_ts < ? AND end_ts > ?)
                  OR (start_ts >= ? AND start_ts < ?))
                 AND is_deleted = 0
+                AND (? = 0 OR \(SyncLocal.shared.localOnlySQL))
               ORDER BY start_ts ASC
-          """, arguments: [toTs, fromTs, fromTs, toTs]
+          """, arguments: [toTs, fromTs, fromTs, toTs, localOnly ? 1 : 0, SyncLocal.shared.localArgument]
       )
       .map { row in
         // Decode metadata JSON (supports object or legacy array)
@@ -635,9 +660,10 @@ extension StorageManager {
                     AND end_ts >= ?
                     AND is_deleted = 0
                     AND category != 'System'
+                    AND \(SyncLocal.shared.localOnlySQL)
                 )
             """,
-          arguments: [batchStartTs, earliestEndTs]
+          arguments: [batchStartTs, earliestEndTs, SyncLocal.shared.localArgument]
         ) ?? false
       }) ?? false
   }
@@ -655,8 +681,9 @@ extension StorageManager {
               WHERE start_ts >= ? AND start_ts < ?
               AND is_deleted = 0
               AND category != 'System'
+              AND \(SyncLocal.shared.localOnlySQL)
           """,
-        arguments: [startTs, endTs]
+        arguments: [startTs, endTs, SyncLocal.shared.localArgument]
       )
     }
 
@@ -864,10 +891,11 @@ extension StorageManager {
                 WHERE start_ts < ?
                   AND batch_id IS NOT ?
                   AND is_deleted = 0
+                  AND \(SyncLocal.shared.localOnlySQL)
                 ORDER BY end_ts DESC, id DESC
                 LIMIT 1
             """,
-          arguments: [beforeTs, excludingBatchId]
+          arguments: [beforeTs, excludingBatchId, SyncLocal.shared.localArgument]
         )
       else {
         return nil
@@ -928,11 +956,14 @@ extension StorageManager {
               SELECT video_summary_url FROM timeline_cards
               WHERE batch_id = ? AND is_deleted = 0 AND video_summary_url IS NOT NULL
           """, arguments: [batchId])
+      let syncReplaced = SyncLocal.shared.localCardsWillBeReplaced(
+        db, where: "batch_id = ? AND is_deleted = 0", arguments: [batchId])
       try db.execute(
         sql: "UPDATE timeline_cards SET is_deleted = 1 WHERE batch_id = ? AND is_deleted = 0",
         arguments: [batchId])
 
       if let extendingCardId {
+        let syncBefore = SyncLocal.shared.cardAnalysisWillChange(db, id: extendingCardId)
         try db.execute(
           sql: """
                 UPDATE timeline_cards
@@ -941,6 +972,7 @@ extension StorageManager {
             """,
           arguments: [card.endTimestamp, endTs, metadataString, extendingCardId])
         cardId = db.changesCount > 0 ? extendingCardId : nil
+        if cardId != nil { SyncLocal.shared.cardAnalysisChanged(db, syncBefore) }
       } else {
         try db.execute(
           sql: """
@@ -955,6 +987,7 @@ extension StorageManager {
             card.summary, card.category, card.subcategory, card.detailedSummary, metadataString,
           ])
         cardId = db.lastInsertedRowID
+        SyncLocal.shared.cardInserted(db, id: db.lastInsertedRowID, replacing: syncReplaced)
       }
     }
     return (cardId, videoPaths)
@@ -1006,7 +1039,11 @@ extension StorageManager {
                  AND (category != 'System' OR batch_id = ?)
                  AND NOT (start_ts > ? AND COALESCE(batch_id, -1) IN (
                    SELECT id FROM analysis_batches WHERE batch_start_ts > ?))
-          """, arguments: [toTs, fromTs, fromTs, toTs, batchId, keepAfterTs, keepAfterTs])
+                 AND \(SyncLocal.shared.localOnlySQL)
+          """,
+        arguments: [
+          toTs, fromTs, fromTs, toTs, batchId, keepAfterTs, keepAfterTs, SyncLocal.shared.localArgument,
+        ])
 
       videoPaths = videoRows.compactMap { $0["video_summary_url"] as? String }
 
@@ -1021,11 +1058,26 @@ extension StorageManager {
                  AND (category != 'System' OR batch_id = ?)
                  AND NOT (start_ts > ? AND COALESCE(batch_id, -1) IN (
                    SELECT id FROM analysis_batches WHERE batch_start_ts > ?))
-          """, arguments: [toTs, fromTs, fromTs, toTs, batchId, keepAfterTs, keepAfterTs])
+                 AND \(SyncLocal.shared.localOnlySQL)
+          """,
+        arguments: [
+          toTs, fromTs, fromTs, toTs, batchId, keepAfterTs, keepAfterTs, SyncLocal.shared.localArgument,
+        ])
 
       for _ in cardsToDelete {
         // Cards being deleted - no-op needed, just iterating to trigger side effects
       }
+
+      // Dayflow Sync: stamp the delete clocks / queue tombstones of the cards about to go, and keep
+      // them so the new cards inherit their private flag and manual projects. Only this device's
+      // cards are replaced (all three statements here): pulled cards are never rewritten.
+      let syncReplaced = SyncLocal.shared.localCardsWillBeReplaced(
+        db,
+        where: """
+          ((start_ts < ? AND end_ts > ?) OR (start_ts >= ? AND start_ts < ?)) AND is_deleted = 0
+          AND (category != 'System' OR batch_id = ?)
+          AND NOT (start_ts > ? AND COALESCE(batch_id, -1) IN (SELECT id FROM analysis_batches WHERE batch_start_ts > ?))
+          """, arguments: [toTs, fromTs, fromTs, toTs, batchId, keepAfterTs, keepAfterTs])
 
       // Soft delete existing cards in the range using timestamp columns
       // Preserve error cards (category='System') from other batches so they remain visible
@@ -1039,7 +1091,11 @@ extension StorageManager {
                  AND (category != 'System' OR batch_id = ?)
                  AND NOT (start_ts > ? AND COALESCE(batch_id, -1) IN (
                    SELECT id FROM analysis_batches WHERE batch_start_ts > ?))
-          """, arguments: [toTs, fromTs, fromTs, toTs, batchId, keepAfterTs, keepAfterTs])
+                 AND \(SyncLocal.shared.localOnlySQL)
+          """,
+        arguments: [
+          toTs, fromTs, fromTs, toTs, batchId, keepAfterTs, keepAfterTs, SyncLocal.shared.localArgument,
+        ])
 
       // Verify soft deletion (count remaining active cards)
       let remainingCount =
@@ -1136,6 +1192,7 @@ extension StorageManager {
         // Capture the ID of the inserted card
         let insertedId = db.lastInsertedRowID
         insertedIds.append(insertedId)
+        SyncLocal.shared.cardInserted(db, id: insertedId, replacing: syncReplaced)
       }
     }
 

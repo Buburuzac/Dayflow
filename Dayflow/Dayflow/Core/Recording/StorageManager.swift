@@ -726,6 +726,12 @@ final class StorageManager: StorageManaging, @unchecked Sendable {
         print("✅ Added is_skipped column to day_goals")
       }
     }
+
+    // Dayflow Sync: uuid/hlc/device columns, sync tables, this device's id (Core/Sync/SyncLocal.swift).
+    // Separate transaction, so a failure here never rolls back the app's own migration.
+    do { try timedWrite("migrateSync") { db in try SyncLocal.shared.migrate(db) } } catch {
+      print("⚠️ Dayflow Sync migration failed: \(error)")
+    }
   }
 
 }

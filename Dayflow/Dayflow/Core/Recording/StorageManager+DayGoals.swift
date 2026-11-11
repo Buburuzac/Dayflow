@@ -93,6 +93,7 @@ extension StorageManager {
       try insertGoalCategories(plan.focusCategories, kind: .focus, day: plan.day, db: db)
       try insertGoalCategories(
         plan.distractionCategories, kind: .distraction, day: plan.day, db: db)
+      SyncLocal.shared.docWritten(db, .dayGoal, plan.day)
     }
   }
 

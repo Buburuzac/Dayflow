@@ -73,6 +73,9 @@ extension MainView {
         Color.clear
       case .agents:
         AgentPlaybackView()
+      case .team:
+        TeamView()
+          .padding(15)
       case .daily:
         DailyView(selectedDate: $selectedDate)
       case .weekly:
@@ -167,15 +170,21 @@ extension MainView {
 
   private var timelineContent: some View {
     VStack(alignment: .leading, spacing: 12) {
-      TabFilterBar(
-        categories: categoryStore.editableCategories,
-        idleCategory: categoryStore.idleCategory,
-        mutedCategoryKeys: $mutedCategoryKeys,
-        onManageCategories: { showCategoryEditor = true },
-        onMoveCategory: { id, targetID in
-          categoryStore.moveCategory(id: id, toPositionOf: targetID)
+      HStack(spacing: 8) {
+        TabFilterBar(
+          categories: categoryStore.editableCategories,
+          idleCategory: categoryStore.idleCategory,
+          mutedCategoryKeys: $mutedCategoryKeys,
+          onManageCategories: { showCategoryEditor = true },
+          onMoveCategory: { id, targetID in
+            categoryStore.moveCategory(id: id, toPositionOf: targetID)
+          }
+        )
+        // Dayflow Sync project filter (Day view; hidden without projects).
+        if timelineMode == .day {
+          TimelineProjectFilterMenu()
         }
-      )
+      }
       .padding(.leading, 10 + TimelineAlignment.categoryRowInset)
       .opacity(contentOpacity)
 

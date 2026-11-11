@@ -89,7 +89,7 @@ export function SyncSettingsPanel() {
     <div className="form sync-panel">
       <p className="muted">
         Sync your timeline between your computers and share project time with your team through a Dayflow Sync Server.
-        Screenshots, the accessibility log and chat never leave this PC; cards marked private reach only your own devices.
+        Screenshots, the accessibility log and chat never leave this PC; cards marked private or in a never-upload category never leave it either.
       </p>
       <label>
         Server

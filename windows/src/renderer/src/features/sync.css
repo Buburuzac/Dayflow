@@ -347,3 +347,43 @@ h3.sub {
   gap: 8px;
   font-size: 13px;
 }
+
+/* Team → Activity: member × day grid */
+.member-day {
+  overflow-x: auto;
+  margin: 6px 0 12px;
+}
+.member-day table {
+  border-collapse: separate;
+  border-spacing: 2px;
+  font-size: 12px;
+}
+.member-day th {
+  font-weight: 500;
+  text-align: center;
+  padding: 2px 4px;
+  white-space: nowrap;
+}
+.member-day th.member {
+  text-align: left;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: sticky;
+  left: 0;
+  background: inherit;
+}
+.member-day td {
+  min-width: 44px;
+  height: 24px;
+  text-align: center;
+  border-radius: 4px;
+  background: #f6f1ec;
+  white-space: nowrap;
+  padding: 0 4px;
+}
+.member-day td.total,
+.member-day tr.totals td {
+  background: transparent;
+  font-weight: 600;
+}

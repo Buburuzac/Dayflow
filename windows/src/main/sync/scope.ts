@@ -54,7 +54,8 @@ export function redactCard(data: CardData, scope: CardScope): CardData {
     detailedSummary: '',
     category: OUT_OF_SCOPE_LABEL,
     subcategory: '',
-    metadata: { distractions: [], appSites: null },
+    // The private flag stays accurate on the server (it decides the team projection).
+    metadata: { distractions: [], appSites: null, private: data.metadata.private === true },
   }
 }
 

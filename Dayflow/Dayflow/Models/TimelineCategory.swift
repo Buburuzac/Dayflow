@@ -180,8 +180,13 @@ final class CategoryStore: ObservableObject {
   func renameCategory(id: UUID, to newName: String) {
     let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return }
+    let oldName = categories.first(where: { $0.id == id })?.name
     updateCategory(id: id) { cat in
       cat.name = trimmed
+    }
+    // Dayflow Sync: a renamed category keeps its "never upload" mark.
+    if let oldName, oldName != trimmed {
+      SyncCenter.shared.categoryRenamed(from: oldName, to: trimmed)
     }
   }
 

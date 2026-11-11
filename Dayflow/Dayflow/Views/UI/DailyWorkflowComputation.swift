@@ -472,6 +472,8 @@ func normalizedHex(_ value: String) -> String {
 }
 
 func fallbackColorHex(for key: String) -> String {
+  // "Out of scope" blocks from Dayflow Sync are always neutral grey.
+  if let fixed = syncFixedCategoryColorHex(key) { return fixed }
   let hash = key.utf8.reduce(5381) { current, byte in
     ((current << 5) &+ current) &+ Int(byte)
   }

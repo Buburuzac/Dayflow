@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { AppStatus, Category, ProviderId, SecretsUpdate, Settings, SettingsWithSecrets } from '../../shared/types.ts'
 import { fmtBytes } from './dates.ts'
 import { SyncSettingsPanel } from './features/Sync.tsx'
+import { toggleExcluded, withRenamedExclusions } from '../../shared/sync-categories.ts'
 
 export const PROVIDERS: { id: ProviderId; name: string; blurb: string }[] = [
   { id: 'gemini', name: 'Gemini', blurb: 'Google Gemini with your own API key. Best quality per cost; data goes to Google.' },
@@ -312,8 +313,13 @@ export function SettingsView({
         <CategoryEditor
           categories={settings.categories}
           onSave={(categories, renames) => {
-            // A renamed category keeps its "never upload" mark (Settings → Sync & team).
-            const excluded = (settings.syncExcludedCategories ?? ['Personal']).map((c) => renames.get(c.toLowerCase()) ?? c)
+            // A renamed category keeps its "never upload" mark (Settings → Sync & team): the new name
+            // is added and the old one kept, since existing cards still carry the old name.
+            const excluded = withRenamedExclusions(
+              settings.syncExcludedCategories ?? ['Personal'],
+              [...renames.entries()],
+              categories.map((c) => c.name),
+            )
             void update({ categories, syncExcludedCategories: excluded })
           }}
         />
@@ -327,7 +333,7 @@ function CategoryEditor({
   onSave,
 }: {
   categories: Category[]
-  /** `renames` maps old names (lower-case) to new names for categories renamed in this edit. */
+  /** `renames` maps old names to new names for categories renamed in this edit. */
   onSave: (c: Category[], renames: Map<string, string>) => void
 }) {
   const [list, setList] = useState(categories)
@@ -338,7 +344,7 @@ function CategoryEditor({
     const renames = new Map<string, string>()
     list.forEach((c, i) => {
       const o = origins[i]
-      if (o && o !== c.name) renames.set(o.toLowerCase(), c.name)
+      if (o && o !== c.name) renames.set(o, c.name)
     })
     onSave(list, renames)
     setOrigins(list.map((c) => c.name))
@@ -397,11 +403,10 @@ function CategoryEditor({
 
 /** Settings → Sync & team → what may leave this PC. Filtering happens here, before upload. */
 function SyncPrivacy({ settings, onSave }: { settings: SettingsWithSecrets; onSave: (p: Partial<Settings>) => void }) {
-  const excluded = new Set((settings.syncExcludedCategories ?? ['Personal']).map((c) => c.toLowerCase()))
-  const toggleCategory = (name: string, on: boolean) => {
-    const next = settings.categories.map((c) => c.name).filter((n) => (n === name ? on : excluded.has(n.toLowerCase())))
-    onSave({ syncExcludedCategories: next })
-  }
+  const list = settings.syncExcludedCategories ?? ['Personal']
+  const excluded = new Set(list.map((c) => c.toLowerCase()))
+  // Only current categories are shown; names of renamed categories stay in the list (old cards keep them).
+  const toggleCategory = (name: string, on: boolean) => onSave({ syncExcludedCategories: toggleExcluded(list, name, on, settings.categories.map((c) => c.name)) })
   return (
     <div className="form sync-privacy">
       <h3 className="sub">What leaves this PC</h3>

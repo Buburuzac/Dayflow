@@ -195,6 +195,7 @@ export class SyncRepo {
   /** Queues this device's existing records after sign-in (cards and observations of the last `days`). */
   backfill(days: number, nowSec = Math.floor(Date.now() / 1000)): number {
     const since = nowSec - days * 86400
+    this.store.scopeDirty = true
     const dev = this.store.deviceId
     let n = 0
     this.store.transaction(() => {
@@ -230,6 +231,19 @@ export class SyncRepo {
     return n
   }
 
+  /** True when rows from the account are stored: other devices' cards/observations, projects, docs clocks. */
+  hasRemoteRows(): boolean {
+    const dev = this.store.deviceId
+    const q = (sql: string, ...args: string[]) => this.db.prepare(sql).get(...args) !== undefined
+    return (
+      q('SELECT 1 FROM timeline_cards WHERE device_id IS NOT NULL AND device_id != ? LIMIT 1', dev) ||
+      q('SELECT 1 FROM observations WHERE device_id IS NOT NULL AND device_id != ? LIMIT 1', dev) ||
+      q('SELECT 1 FROM projects LIMIT 1') ||
+      q('SELECT 1 FROM project_members LIMIT 1') ||
+      q('SELECT 1 FROM sync_meta LIMIT 1')
+    )
+  }
+
   /** Signing out: drop everything that came from the account (other devices' rows, projects). */
   purgeRemote(): void {
     const dev = this.store.deviceId
@@ -243,6 +257,7 @@ export class SyncRepo {
       // Assignments to projects that no longer exist locally are meaningless.
       this.db.exec('DELETE FROM card_projects')
     })
+    this.store.scopeDirty = true
   }
 
   // ---- sync_meta (HLCs of records stored elsewhere) ----
@@ -338,6 +353,7 @@ export class SyncRepo {
     }
     this.putProject(row)
     this.store.enqueue('project', row.id)
+    this.store.scopeDirty = true
     return row
   }
 
@@ -372,6 +388,7 @@ export class SyncRepo {
   setMyShare(projectId: string, userId: string, level: ShareLevel | null): void {
     this.putMember(projectId, userId, level, false, this.store.tick())
     this.store.enqueue('project_member', `${projectId}:${userId}`)
+    this.store.scopeDirty = true
   }
 
   projectViews(userId: string | null, includeArchived = true): ProjectView[] {
@@ -464,6 +481,7 @@ export class SyncRepo {
   /** Manual choice in the timeline: one project (share 1) or none. */
   setManualProject(cardUuid: string, projectId: string | null): void {
     this.setAssignments(cardUuid, projectId ? [{ projectId, share: 1, source: 'manual', confidence: 1, confirmed: true }] : [])
+    this.store.scopeDirty = true
   }
 
   confirmProject(cardUuid: string, projectId: string): void {
@@ -471,6 +489,7 @@ export class SyncRepo {
     if (!cur || cur.deleted) return
     this.putCardProject({ ...cur, confirmed: true, source: 'manual', confidence: 1, hlc: this.store.tick() })
     this.store.enqueue('card_project', `${cardUuid}:${projectId}`)
+    this.store.scopeDirty = true
   }
 
   /** Adds project chips to cards for the timeline. */

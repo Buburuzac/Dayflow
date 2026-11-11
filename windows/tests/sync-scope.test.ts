@@ -68,7 +68,7 @@ test(
     assert.equal(cardData(first).summary, '')
     assert.equal(cardData(first).detailedSummary, '')
     assert.equal(cardData(first).category, OUT_OF_SCOPE_LABEL)
-    assert.deepEqual(cardData(first).metadata, { distractions: [], appSites: null })
+    assert.deepEqual(cardData(first).metadata, { distractions: [], appSites: null, private: false })
     assert.ok((first.data as { startTs: number }).startTs > 0, 'times are kept')
 
     // The local card keeps its real content.
@@ -194,5 +194,23 @@ test(
     // full → out_of_scope happened on first upload (never sent before = "full").
     assert.ok(first.fieldHlc!.title > first.fieldHlc!.private, 'title is re-clocked')
     assert.equal(first.fieldHlc!.private, first.fieldHlc!.deleted, 'private and deleted keep their clocks')
+  }),
+)
+
+test(
+  'private flag: un-marking a card sends private: false so the server clears it',
+  withStore((store, repo) => {
+    const b = store.createBatch(t9, t9 + 1800, [])
+    store.replaceCardsInRange(t9, t9 + 1800, [card('9:00 AM', '9:30 AM', 'Client call')], b)
+    const row = store.cardsForDay('2026-11-08')[0]
+    store.setCardPrivate(row.id, true)
+    const hidden = flush(store, repo).find((c) => c.entity === 'card')!
+    assert.equal(cardData(hidden).metadata.private, true)
+    store.setCardPrivate(row.id, false)
+    rescopeCards(store)
+    const shown = flush(store, repo).find((c) => c.entity === 'card')!
+    assert.equal(cardData(shown).metadata.private, false, 'explicit false, not omitted')
+    assert.equal(shown.deleted, false, 'and no longer deleted')
+    assert.ok(shown.fieldHlc!.private > hidden.fieldHlc!.private, 'the newer private clock wins on the server')
   }),
 )

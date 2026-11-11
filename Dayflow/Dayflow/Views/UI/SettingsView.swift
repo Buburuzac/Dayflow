@@ -11,6 +11,7 @@ import SwiftUI
 struct SettingsView: View {
   private enum SettingsTab: String, CaseIterable, Identifiable {
     case account
+    case sync
     case storage
     case privacy
     case providers
@@ -23,6 +24,7 @@ struct SettingsView: View {
     var title: String {
       switch self {
       case .account: return String(localized: "Account")
+      case .sync: return String(localized: "Sync & team")
       case .storage: return String(localized: "Storage")
       case .privacy: return String(localized: "Privacy")
       case .providers: return String(localized: "Providers")
@@ -255,6 +257,8 @@ struct SettingsView: View {
       switch selectedTab {
       case .account:
         SettingsAccountSection()
+      case .sync:
+        SettingsSyncTabView()
       case .storage:
         SettingsStorageTabView(viewModel: storageViewModel)
       case .privacy:

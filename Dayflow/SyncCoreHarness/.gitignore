@@ -1,0 +1,4 @@
+.build/
+.swiftpm/
+# created by link-core.sh
+Sources/DayflowSyncCore/Sync*.swift

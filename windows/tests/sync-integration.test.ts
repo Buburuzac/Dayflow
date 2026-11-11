@@ -38,6 +38,8 @@ function mergeCard(cur: SyncChange, next: SyncChange): SyncChange {
   for (const f of ['title', 'category', 'subcategory', 'deleted', 'private']) {
     const h = next.fieldHlc?.[f]
     if (!h || h <= (fh[f] ?? '')) continue
+    // Like the real server (engine.ts userFieldValue): an absent value is skipped, clock included.
+    if (f === 'deleted' && typeof next.deleted !== 'boolean') continue
     fh[f] = h
     if (f === 'deleted') deleted = next.deleted
     else if (f === 'private') cd.metadata = { ...(cd.metadata as object), private: (nd.metadata as { private?: boolean } | undefined)?.private }
@@ -430,6 +432,82 @@ test('upload policy: out-of-scope and personal cards across two devices (DAYFLOW
   } finally {
     A.store.close()
     B.store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+/** A fresh account per run, so a long-lived real server never mixes in cards of earlier runs. */
+const freshEmail = (tag: string) => `${tag}-${randomBytes(4).toString('hex')}@velesagro.pl`
+
+test('upload policy: a card leaving the "excluded" scope is restored on the other device (S1)', async () => {
+  const mock = mockServer({ devAuth: true })
+  const url = REAL_SERVER || (await mock.listen())
+  const dir = mkdtempSync(join(tmpdir(), 'dayflow-s1-'))
+  const A = device(dir, 'desktop', url)
+  const B = device(dir, 'laptop', url)
+  A.store.syncPolicy = { excludedCategories: ['Personal'], outOfScope: false, observations: false }
+  try {
+    const email = freshEmail('s1')
+    await A.svc.signInDev(email)
+    await B.svc.signInDev(email)
+    const b1 = A.store.createBatch(t9, t9 + 1800, [])
+    A.store.replaceCardsInRange(t9, t9 + 1800, [card('9:00 AM', '9:30 AM', 'Booked the dentist', { category: 'Personal' })], b1)
+    await A.svc.syncNow()
+    await B.svc.syncNow()
+    assert.deepEqual(B.store.cardsForDay('2026-11-08').map((c) => c.title), [], 'excluded: nothing visible on B')
+
+    // "Personal" is no longer excluded: the card goes up in full and must not stay deleted on the server.
+    A.svc.setPolicy({ excludedCategories: [], outOfScope: false, observations: false })
+    await A.svc.syncNow()
+    await B.svc.syncNow()
+    assert.deepEqual(B.store.cardsForDay('2026-11-08').map((c) => c.title), ['Booked the dentist'])
+    assert.equal(A.svc.status().lastError, null)
+    if (!REAL_SERVER) {
+      const sent = mock.pushes.flat().filter((c) => c.entity === 'card')
+      assert.ok(sent.every((c) => typeof c.deleted === 'boolean'), 'deleted is always sent as a boolean')
+    }
+  } finally {
+    A.svc.stop()
+    B.svc.stop()
+    A.store.close()
+    B.store.close()
+    await mock.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('sign-out → sign-in: our own scoped echoes (old device id) leave the local cards intact (S2)', async () => {
+  const mock = mockServer({ devAuth: true })
+  const url = REAL_SERVER || (await mock.listen())
+  const dir = mkdtempSync(join(tmpdir(), 'dayflow-s2-'))
+  const A = device(dir, 'desktop', url)
+  A.store.syncPolicy = { excludedCategories: ['Personal'], outOfScope: true, observations: false }
+  try {
+    const email = freshEmail('s2')
+    await A.svc.signInDev(email)
+    const b1 = A.store.createBatch(t9, t9 + 3600, [])
+    A.store.replaceCardsInRange(
+      t9,
+      t9 + 3600,
+      [card('9:00 AM', '9:30 AM', 'Biosun invoice import'), card('9:30 AM', '10:00 AM', 'Booked the dentist', { category: 'Personal' })],
+      b1,
+    )
+    await A.svc.syncNow()
+    const firstId = A.store.deviceId
+    await A.svc.signOut()
+    await A.svc.signInDev(email)
+    assert.notEqual(A.store.deviceId, firstId, 'a new device id after signing in again')
+    await A.svc.syncNow()
+    const cards = A.store.cardsForDay('2026-11-08')
+    assert.deepEqual(cards.map((c) => [c.title, c.category]).sort(), [
+      ['Biosun invoice import', 'Work'],
+      ['Booked the dentist', 'Personal'],
+    ])
+    assert.equal(A.svc.status().lastError, null)
+  } finally {
+    A.svc.stop()
+    A.store.close()
+    await mock.close()
     rmSync(dir, { recursive: true, force: true })
   }
 })

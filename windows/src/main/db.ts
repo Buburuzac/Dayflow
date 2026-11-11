@@ -69,6 +69,11 @@ export class Store {
   syncPolicy: SyncPolicy = { ...DEFAULT_SYNC_POLICY }
   /** Called after something was queued in the outbox (the sync engine debounces a push). */
   onOutbox: (() => void) | null = null
+  /**
+   * Something that decides card scopes changed (policy, projects, assignments, a private/category
+   * edit): the next rescope re-checks every card sent before, not just the recent window.
+   */
+  scopeDirty = true
 
   constructor(path: string) {
     this.db = new DatabaseSync(path)
@@ -256,6 +261,17 @@ export class Store {
       CREATE TABLE IF NOT EXISTS sync_meta (
         key TEXT PRIMARY KEY,
         hlc TEXT NOT NULL
+      );
+
+      -- "Reprocess day": user choices (private flag, manual projects) of the removed cards, keyed by
+      -- time range, re-applied to the regenerated cards that mostly overlap them.
+      CREATE TABLE IF NOT EXISTS card_carryover (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        start_ts INTEGER NOT NULL,
+        end_ts INTEGER NOT NULL,
+        private INTEGER NOT NULL DEFAULT 0,
+        projects TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL
       );
     `)
 
@@ -763,8 +779,10 @@ export class Store {
         // The card this one mostly overlaps keeps its user choices: private flag and manual projects.
         const prev = isError ? null : Store.bestOverlap(old, range.startTs, range.endTs)
         const prevMeta = prev ? (parseJsonObject(prev.metadata) as CardMetadata) : {}
+        // No live card here: a "Reprocess day" may have left the removed cards' choices behind.
+        const carried = !isError && !prev ? this.carryoverFor(range.startTs, range.endTs) : null
         const meta: CardMetadata = { distractions: c.distractions ?? [], appSites: c.appSites, isError }
-        if (prevMeta.private) meta.private = true
+        if (prevMeta.private || carried?.private) meta.private = true
         const uuid = randomUUID()
         const r = insert.run(
           batchId,
@@ -785,6 +803,7 @@ export class Store {
         )
         let inheritedManual = false
         if (prev && typeof prev.uuid === 'string') inheritedManual = this.copyManualProjects(prev.uuid, uuid)
+        else if (carried) inheritedManual = this.insertManualProjects(uuid, carried.projects)
         if (!isError) this.enqueueCard(uuid, c.category, null)
         out.push({ id: Number(r.lastInsertRowid), uuid, startTs: range.startTs, endTs: range.endTs, card: c, inheritedManual })
       }
@@ -807,10 +826,17 @@ export class Store {
     return best && bestOverlap * 2 >= Math.max(1, end - start) ? best : null
   }
 
-  private copyManualProjects(fromUuid: string, toUuid: string): boolean {
-    const rows = this.db
+  private manualProjects(cardUuid: string): { project_id: string; share: number }[] {
+    return this.db
       .prepare("SELECT project_id, share FROM card_projects WHERE card_uuid = ? AND source = 'manual' AND deleted = 0")
-      .all(fromUuid) as { project_id: string; share: number }[]
+      .all(cardUuid) as { project_id: string; share: number }[]
+  }
+
+  private copyManualProjects(fromUuid: string, toUuid: string): boolean {
+    return this.insertManualProjects(toUuid, this.manualProjects(fromUuid))
+  }
+
+  private insertManualProjects(toUuid: string, rows: { project_id: string; share: number }[]): boolean {
     const ins = this.db.prepare(
       `INSERT OR REPLACE INTO card_projects (card_uuid, project_id, share, source, confidence, confirmed, deleted, hlc)
        VALUES (?, ?, ?, 'manual', 1, 1, 0, ?)`,
@@ -820,6 +846,35 @@ export class Store {
       this.enqueue('card_project', `${toUuid}:${r.project_id}`)
     }
     return rows.length > 0
+  }
+
+  /** The carried-over choices of a removed card covering at least half of [start, end), if any. */
+  private carryoverFor(start: number, end: number): { private: boolean; projects: { project_id: string; share: number }[] } | null {
+    const rows = this.db
+      .prepare('SELECT start_ts, end_ts, private, projects FROM card_carryover WHERE start_ts < ? AND end_ts > ?')
+      .all(end, start) as { start_ts: number; end_ts: number; private: number; projects: string }[]
+    let best: (typeof rows)[number] | null = null
+    let bestOverlap = 0
+    for (const r of rows) {
+      const ov = Math.min(end, Number(r.end_ts)) - Math.max(start, Number(r.start_ts))
+      if (ov > bestOverlap) {
+        best = r
+        bestOverlap = ov
+      }
+    }
+    if (!best || bestOverlap * 2 < Math.max(1, end - start)) return null
+    let projects: { project_id: string; share: number }[] = []
+    try {
+      const v = JSON.parse(best.projects) as unknown
+      if (Array.isArray(v)) {
+        projects = (v as { project_id?: unknown; share?: unknown }[])
+          .filter((x) => !!x && typeof x.project_id === 'string')
+          .map((x) => ({ project_id: String(x.project_id), share: Number.isFinite(Number(x.share)) ? Number(x.share) : 1 }))
+      }
+    } catch {
+      /* ignore a bad row */
+    }
+    return { private: Number(best.private) === 1, projects }
   }
 
   insertErrorCard(batchId: number, startTs: number, endTs: number, message: string): void {
@@ -878,6 +933,7 @@ export class Store {
       sets.push('field_hlc = ?')
       vals.push(JSON.stringify(fh))
       this.db.prepare(`UPDATE timeline_cards SET ${sets.join(', ')} WHERE id = ?`).run(...vals, id)
+      if (patch.category !== undefined || patch.private !== undefined) this.scopeDirty = true
       this.enqueueCard(r.uuid, patch.category ?? r.category, r.metadata)
     })
   }
@@ -911,12 +967,24 @@ export class Store {
         .all(start, end)
         .map((r) => Number((r as { id: number }).id))
       const pick = this.db.prepare(
-        `SELECT id, uuid, category, metadata, field_hlc FROM timeline_cards
+        `SELECT id, uuid, start_ts, end_ts, category, metadata, field_hlc FROM timeline_cards
          WHERE is_deleted = 0 AND start_ts < ? AND end_ts > ? AND start_ts >= ? AND start_ts < ? AND ${this.localSql}`,
       )
       const del = this.db.prepare('UPDATE timeline_cards SET is_deleted = 1, field_hlc = ? WHERE id = ?')
+      // The regenerated cards get new uuids: keep the user's choices (private flag, manual
+      // projects) by time range so replaceCardsDetailed re-applies them. A previous reprocess of
+      // this day is superseded; leftovers older than a week are dropped.
+      this.db
+        .prepare('DELETE FROM card_carryover WHERE (start_ts < ? AND end_ts > ?) OR created_at < ?')
+        .run(end, start, Date.now() - 7 * 86400_000)
+      const keep = this.db.prepare('INSERT INTO card_carryover (start_ts, end_ts, private, projects, created_at) VALUES (?, ?, ?, ?, ?)')
       for (const r of coveredRanges) {
         for (const c of pick.all(r.end, r.start, start, end, this.deviceId) as Record<string, unknown>[]) {
+          const isPrivate = parseJsonObject(c.metadata).private === true
+          const manual = typeof c.uuid === 'string' ? this.manualProjects(c.uuid) : []
+          if (isPrivate || manual.length) {
+            keep.run(Number(c.start_ts), Number(c.end_ts), isPrivate ? 1 : 0, JSON.stringify(manual), Date.now())
+          }
           const h = this.tick()
           const fh = parseJsonObject(c.field_hlc)
           fh.deleted = h

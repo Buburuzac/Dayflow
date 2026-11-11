@@ -44,11 +44,14 @@ export class SyncClient {
   readonly baseUrl: string
   private readonly token: string | null
   private readonly fetchImpl: FetchLike
+  /** Aborts every request of this client (a sync cycle cancelled by sign-out). */
+  private readonly signal: AbortSignal | undefined
 
-  constructor(baseUrl: string, token: string | null, fetchImpl: FetchLike = fetch) {
+  constructor(baseUrl: string, token: string | null, fetchImpl: FetchLike = fetch, signal?: AbortSignal) {
     this.baseUrl = normalizeServerUrl(baseUrl)
     this.token = token
     this.fetchImpl = fetchImpl
+    this.signal = signal
   }
 
   private async req<T>(method: string, path: string, body?: unknown, opts: { auth?: boolean; timeoutMs?: number } = {}): Promise<T> {
@@ -64,7 +67,7 @@ export class SyncClient {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: withTimeout(opts.timeoutMs ?? 30_000),
+        signal: withTimeout(opts.timeoutMs ?? 30_000, this.signal),
       })
     } catch (err) {
       const msg = err instanceof Error ? (err.cause instanceof Error ? err.cause.message : err.message) : String(err)

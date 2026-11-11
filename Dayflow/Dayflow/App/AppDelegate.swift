@@ -100,6 +100,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     AgentBridgeServer.shared.startIfEnabled()
     AgentClientRegistration.repairStaleRegistrations()
 
+    // Dayflow Sync: resume a signed-in session in the background (Core/Sync/SyncCenter.swift).
+    SyncCenter.startForApp()
+
     // Start heartbeat for DAU tracking
     appLaunchDate = Date()
     startHeartbeat()
@@ -345,6 +348,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       analyticsPreferenceObserver = nil
     }
     DailyRecapScheduler.shared.stop()
+    SyncCenter.shared.stop()
     flushReferralUsage(reason: "terminate")
     // If onboarding not completed, mark abandoned with last step
     let didOnboard = UserDefaults.standard.bool(forKey: "didOnboard")

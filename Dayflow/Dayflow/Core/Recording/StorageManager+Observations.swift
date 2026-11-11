@@ -18,6 +18,7 @@ extension StorageManager {
             batchId, obs.startTs, obs.endTs, obs.observation,
             obs.metadata, obs.llmModel,
           ])
+        SyncLocal.shared.observationInserted(db, id: db.lastInsertedRowID)
       }
     }
   }
@@ -55,11 +56,12 @@ extension StorageManager {
         try Row.fetchAll(
           db,
           sql: """
-                SELECT * FROM observations 
-                WHERE (start_ts < ? AND end_ts > ?) 
-                   OR (start_ts >= ? AND start_ts < ?)
+                SELECT * FROM observations
+                WHERE ((start_ts < ? AND end_ts > ?)
+                   OR (start_ts >= ? AND start_ts < ?))
+                  AND \(SyncLocal.shared.localOnlySQL)
                 ORDER BY start_ts ASC
-            """, arguments: [toTs, fromTs, fromTs, toTs]
+            """, arguments: [toTs, fromTs, fromTs, toTs, SyncLocal.shared.localArgument]
         ).map { row in
           Observation(
             id: row["id"],
@@ -131,10 +133,11 @@ extension StorageManager {
       try Row.fetchAll(
         db,
         sql: """
-              SELECT * FROM observations 
+              SELECT * FROM observations
               WHERE start_ts >= ? AND end_ts <= ?
+                AND \(SyncLocal.shared.localOnlySQL)
               ORDER BY start_ts ASC
-          """, arguments: [startTs, endTs]
+          """, arguments: [startTs, endTs, SyncLocal.shared.localArgument]
       ).map { row in
         Observation(
           id: row["id"],

@@ -30,6 +30,75 @@ const hm = (minutes: number) => {
 }
 const clock = (ts: number) => new Date(ts * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
+type Range = 'today' | 'week' | 'month' | 'custom'
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
+/** Longest range the team views ask for (the grid gets one column per day). */
+const MAX_RANGE_DAYS = 93
+
+/** Every day from `from` to `to` inclusive (YYYY-MM-DD), capped at MAX_RANGE_DAYS. */
+function daysBetween(from: string, to: string): string[] {
+  const out: string[] = []
+  for (let d = from; d <= to && out.length < MAX_RANGE_DAYS; d = shiftDay(d, 1)) out.push(d)
+  return out
+}
+
+const weekdayShort = (day: string) => {
+  const [y, m, d] = day.split('-').map(Number)
+  return new Date(y, m - 1, d, 12).toLocaleDateString([], { weekday: 'short' })
+}
+
+/** Member × day minutes grid (ProjectReport.byMemberDay); a column per day of the range. */
+function MemberDayGrid({ report, from, to }: { report: ProjectReport; from: string; to: string }) {
+  const days = daysBetween(from, to)
+  const cells = new Map<string, number>()
+  for (const c of report.byMemberDay ?? []) cells.set(`${c.userId}|${c.day}`, (cells.get(`${c.userId}|${c.day}`) ?? 0) + c.minutes)
+  const dayTotals = new Map((report.byDay ?? []).map((d) => [d.day, d.minutes]))
+  const max = Math.max(1, ...[...cells.values()])
+  if (!report.byMember.length) return null
+  return (
+    <div className="member-day">
+      <table>
+        <thead>
+          <tr>
+            <th />
+            {days.map((d) => (
+              <th key={d} title={d}>
+                <span className="muted">{weekdayShort(d)}</span>
+                <br />
+                {d.slice(8)}
+              </th>
+            ))}
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {report.byMember.map((m) => (
+            <tr key={m.userId}>
+              <th className="member">{m.userName}</th>
+              {days.map((d) => {
+                const v = cells.get(`${m.userId}|${d}`) ?? 0
+                return (
+                  <td key={d} title={`${m.userName}, ${d}: ${hm(v)}`} style={v ? { background: `rgba(185, 132, 255, ${0.15 + 0.6 * (v / max)})` } : undefined}>
+                    {v ? hm(v) : ''}
+                  </td>
+                )
+              })}
+              <td className="total">{hm(m.minutes)}</td>
+            </tr>
+          ))}
+          <tr className="totals">
+            <th className="member">All</th>
+            {days.map((d) => (
+              <td key={d}>{dayTotals.get(d) ? hm(dayTotals.get(d)!) : ''}</td>
+            ))}
+            <td className="total">{hm(report.totalMinutes)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export function TeamView() {
   const [status] = useSyncStatus()
   const [sub, setSub] = useState<Sub>('projects')
@@ -329,26 +398,45 @@ function ProjectEditor({
 function ActivityPanel({ projects }: { projects: ProjectView[] }) {
   const active = projects.filter((p) => !p.archived)
   const [projectId, setProjectId] = useState<string>('')
-  const [range, setRange] = useState<'today' | 'week'>('today')
+  const [range, setRange] = useState<Range>('today')
+  const today = currentDay()
+  const [customFrom, setCustomFrom] = useState(shiftDay(today, -13))
+  const [customTo, setCustomTo] = useState(today)
   const [feed, setFeed] = useState<ProjectEntry[] | null>(null)
   const [report, setReport] = useState<ProjectReport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const pid = projectId || active[0]?.id || ''
-  const today = currentDay()
-  const from = range === 'today' ? today : weekStart(today)
+  const from =
+    range === 'today' ? today : range === 'week' ? weekStart(today) : range === 'month' ? `${today.slice(0, 8)}01` : customFrom
+  const to = range === 'custom' ? customTo : today
+  const rangeError =
+    !DAY_RE.test(from) || !DAY_RE.test(to)
+      ? 'Pick both dates.'
+      : from > to
+        ? 'The start date is after the end date.'
+        : shiftDay(from, MAX_RANGE_DAYS - 1) < to
+          ? `Pick at most ${MAX_RANGE_DAYS} days.`
+          : null
 
   useEffect(() => {
-    if (!pid) return
+    if (!pid || rangeError) return
+    let cancelled = false
     setError(null)
     setFeed(null)
     setReport(null)
-    Promise.all([call<ProjectEntry[]>('sync:feed', pid, from, today), call<ProjectReport>('sync:report', pid, from, today)])
+    Promise.all([call<ProjectEntry[]>('sync:feed', pid, from, to), call<ProjectReport>('sync:report', pid, from, to)])
       .then(([f, r]) => {
+        if (cancelled) return
         setFeed(f)
         setReport(r)
       })
-      .catch((err: unknown) => setError(ipcErrorMessage(err)))
-  }, [pid, from, today])
+      .catch((err: unknown) => {
+        if (!cancelled) setError(ipcErrorMessage(err))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [pid, from, to, rangeError])
 
   if (!active.length) return <p className="team-body muted">No projects yet.</p>
   const byDay = new Map<string, ProjectEntry[]>()
@@ -373,8 +461,22 @@ function ActivityPanel({ projects }: { projects: ProjectView[] }) {
           <button className={range === 'week' ? 'active' : ''} onClick={() => setRange('week')}>
             This week
           </button>
+          <button className={range === 'month' ? 'active' : ''} onClick={() => setRange('month')}>
+            This month
+          </button>
+          <button className={range === 'custom' ? 'active' : ''} onClick={() => setRange('custom')}>
+            Custom
+          </button>
         </div>
+        {range === 'custom' && (
+          <>
+            <input type="date" value={customFrom} max={customTo || undefined} onChange={(e) => setCustomFrom(e.target.value)} />
+            <span className="muted">to</span>
+            <input type="date" value={customTo} min={customFrom || undefined} onChange={(e) => setCustomTo(e.target.value)} />
+          </>
+        )}
       </div>
+      {rangeError && <div className="notice err">{rangeError}</div>}
       {error && <div className="notice err">{error}</div>}
       {report && (
         <section className="panel">
@@ -390,14 +492,22 @@ function ActivityPanel({ projects }: { projects: ProjectView[] }) {
               </div>
             ))}
           </div>
-          {range === 'week' && report.byDay.length > 0 && (
-            <div className="chips">
-              {report.byDay.map((d) => (
-                <span key={d.day} className="total-chip">
-                  {d.day.slice(5)} <b>{hm(d.minutes)}</b>
-                </span>
-              ))}
-            </div>
+          {from !== to && report.byMember.length > 0 && <MemberDayGrid report={report} from={from} to={to} />}
+          {(report.byCategory?.length ?? 0) > 0 && (
+            <>
+              <h3 className="sub">By category</h3>
+              <div className="totals-grid">
+                {report.byCategory!.map((c) => (
+                  <div key={c.category} className="total-row">
+                    <span className={c.category.startsWith('(') ? 'muted' : ''}>{c.category}</span>
+                    <span className="bar">
+                      <span style={{ width: `${report.totalMinutes ? (c.minutes / report.totalMinutes) * 100 : 0}%` }} />
+                    </span>
+                    <b>{hm(c.minutes)}</b>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </section>
       )}

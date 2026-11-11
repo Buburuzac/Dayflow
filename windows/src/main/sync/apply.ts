@@ -15,6 +15,7 @@ import type { DocEntity } from './hooks.ts'
 import { SHARE_LEVELS } from './repo.ts'
 import type { SyncRepo } from './repo.ts'
 import { splitPair } from './outbox.ts'
+import { mergeCategoryLists } from '../../shared/sync-categories.ts'
 
 export interface ApplyResult {
   applied: number
@@ -111,19 +112,20 @@ export class RemoteApplier {
       }
       case 'observation':
         return this.applyObservation(c)
+      // Assignments and projects decide card scopes: the next rescope checks every card.
       case 'card_project': {
         const ok = this.applyCardProject(c)
-        if (ok) res.cards = true
+        if (ok) res.cards = this.store.scopeDirty = true
         return ok
       }
       case 'project': {
         const ok = this.applyProject(c)
-        if (ok) res.projects = res.cards = true
+        if (ok) res.projects = res.cards = this.store.scopeDirty = true
         return ok
       }
       case 'project_member': {
         const ok = this.applyMember(c)
-        if (ok) res.projects = true
+        if (ok) res.projects = this.store.scopeDirty = true
         return ok
       }
     }
@@ -239,6 +241,8 @@ export class RemoteApplier {
       vals.push(JSON.stringify(meta))
     }
     if (sets.length === 0) return false
+    // Another device edited the category or private flag of one of our cards: its scope may change.
+    if (local && sets.some((x) => x.startsWith('category') || x.startsWith('metadata'))) this.store.scopeDirty = true
     sets.push('field_hlc = ?')
     vals.push(JSON.stringify(fh))
     db.prepare(`UPDATE timeline_cards SET ${sets.join(', ')} WHERE id = ?`).run(...vals, Number(row.id))
@@ -363,8 +367,22 @@ export class RemoteApplier {
         /* keep the string */
       }
     }
+    // First categories pull after sign-in (no local clock yet): never drop local categories. Keep the
+    // server's list, append the local ones it lacks, and upload the merged list.
+    let pushMerged = false
+    if (entity === 'user_doc' && localId === 'categories' && !this.repo.metaHlc(key) && !c.deleted && Array.isArray(payload)) {
+      const local = this.docs.read('user_doc', 'categories')
+      if (Array.isArray(local)) {
+        const merged = mergeCategoryLists(payload as { name: string; isIdle?: boolean }[], local as { name: string; isIdle?: boolean }[])
+        if (merged.length > payload.length) {
+          payload = merged
+          pushMerged = true
+        }
+      }
+    }
     this.docs.write(entity, localId, c.deleted ? null : payload)
     this.repo.setMetaHlc(key, c.hlc)
+    if (pushMerged) this.repo.recordDoc('user_doc', 'categories')
     return true
   }
 }

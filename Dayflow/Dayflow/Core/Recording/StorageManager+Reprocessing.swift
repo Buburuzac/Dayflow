@@ -39,10 +39,13 @@ extension StorageManager {
               WHERE start_ts >= ? AND start_ts < ?
                 AND video_summary_url IS NOT NULL
                 AND is_deleted = 0
-          """, arguments: [startTs, endTs])
+                AND \(SyncLocal.shared.localOnlySQL)
+          """, arguments: [startTs, endTs, SyncLocal.shared.localArgument])
 
       videoPaths = rows.compactMap { $0["video_summary_url"] as? String }
 
+      SyncLocal.shared.localCardsWillBeReprocessed(
+        db, where: "start_ts >= ? AND start_ts < ? AND is_deleted = 0", arguments: [startTs, endTs])
       // Soft delete the timeline cards by setting is_deleted = 1
       try db.execute(
         sql: """
@@ -50,7 +53,8 @@ extension StorageManager {
               SET is_deleted = 1
               WHERE start_ts >= ? AND start_ts < ?
                 AND is_deleted = 0
-          """, arguments: [startTs, endTs])
+                AND \(SyncLocal.shared.localOnlySQL)
+          """, arguments: [startTs, endTs, SyncLocal.shared.localArgument])
     }
 
     return videoPaths
@@ -78,6 +82,8 @@ extension StorageManager {
 
         videoPaths = rows.compactMap { $0["video_summary_url"] as? String }
 
+        SyncLocal.shared.localCardsWillBeReprocessed(
+          db, where: "batch_id IN (\(placeholders)) AND is_deleted = 0", arguments: StatementArguments(batchIds))
         // Soft delete the records
         try db.execute(
           sql: """
@@ -101,6 +107,8 @@ extension StorageManager {
 
     try? db.write { db in
       let placeholders = Array(repeating: "?", count: batchIds.count).joined(separator: ",")
+      SyncLocal.shared.observationsWillDelete(
+        db, where: "batch_id IN (\(placeholders))", arguments: StatementArguments(batchIds))
       try db.execute(
         sql: """
               DELETE FROM observations WHERE batch_id IN (\(placeholders))

@@ -142,6 +142,7 @@ extension StorageManager {
                   payload_json = excluded.payload_json,
                   updated_at = CURRENT_TIMESTAMP
           """, arguments: [standupDay, payloadJSON])
+      SyncLocal.shared.docWritten(db, .standup, standupDay)
     }
   }
 

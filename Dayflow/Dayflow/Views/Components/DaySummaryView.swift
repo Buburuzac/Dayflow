@@ -242,7 +242,8 @@ struct DaySummaryView: View {
 
     dataLoadTask = Task.detached(priority: .userInitiated) {
       // Use timeline display date to handle 4 AM boundary
-      let cards = storageManager.fetchTimelineCards(forDay: dayString)
+      // Dayflow Sync: other devices' cards would double count this Mac's time.
+      let cards = DaySummaryStats.localCardsOnly(storageManager.fetchTimelineCards(forDay: dayString))
       let explicitPlanForDay = storageManager.fetchDayGoalPlan(forDay: dayString) != nil
       let plan = DaySummaryStats.carriedForwardGoalPlan(
         day: dayString,

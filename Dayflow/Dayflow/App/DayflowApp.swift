@@ -409,7 +409,7 @@ struct DayflowApp: App {
           dispatchPendingNotificationNavigation(after: 0.1)
         }
       }
-      .frame(minWidth: 900, maxWidth: .infinity, minHeight: 558, maxHeight: .infinity)
+      .frame(minWidth: 900, maxWidth: .infinity, minHeight: 610, maxHeight: .infinity)
     }
     .windowStyle(.hiddenTitleBar)
     .windowResizability(.contentMinSize)

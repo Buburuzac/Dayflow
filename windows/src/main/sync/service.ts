@@ -21,7 +21,7 @@ import { HttpError, SyncClient, normalizeServerUrl } from './client.ts'
 import type { FetchLike } from './client.ts'
 import type { DocSources } from './docs.ts'
 import type { DocEntity } from './hooks.ts'
-import { buildBatch, commitAccepted, requeueObservations, rescopeCards } from './outbox.ts'
+import { buildBatch, commitAccepted, matchRejections, requeueObservations, rescopeCards } from './outbox.ts'
 import { samePolicy, type SyncPolicy } from './scope.ts'
 import { SHARE_LEVELS, SyncRepo } from './repo.ts'
 
@@ -50,6 +50,13 @@ export interface SyncServiceDeps {
 }
 
 const MAX_BACKOFF = 5 * 60_000
+
+/** Thrown inside a sync cycle once the session it started in has ended (sign-out, sign-in). */
+class SessionChanged extends Error {
+  constructor() {
+    super('The sync session changed')
+  }
+}
 const SAFE_TEXT = (s: unknown, max: number) => (typeof s === 'string' ? s.trim().slice(0, max) : '')
 
 export class SyncService {
@@ -69,6 +76,13 @@ export class SyncService {
   private pullTimer: NodeJS.Timeout | null = null
   private rejectNote: string | null = null
   private needsDocBackfill = false
+  /**
+   * Session generation, incremented on sign-in and sign-out. A cycle remembers the generation it
+   * started in and checks it after every await, before writing anything.
+   */
+  private session = 0
+  /** Aborts the requests of the running cycle. */
+  private cycleAbort: AbortController | null = null
 
   constructor(deps: SyncServiceDeps) {
     this.deps = deps
@@ -85,8 +99,23 @@ export class SyncService {
     return !!this.deps.token.get() && !!this.repo.state().userId
   }
 
-  private client(withToken = true): SyncClient {
-    return new SyncClient(this.repo.state().serverUrl, withToken ? this.deps.token.get() || null : null, this.deps.fetchImpl)
+  private client(withToken = true, signal?: AbortSignal): SyncClient {
+    return new SyncClient(this.repo.state().serverUrl, withToken ? this.deps.token.get() || null : null, this.deps.fetchImpl, signal)
+  }
+
+  /** Throws when the session a cycle started in is over: nothing it received may be written. */
+  private alive(gen: number): void {
+    if (gen !== this.session) throw new SessionChanged()
+  }
+
+  /** Ends the current session: stops timers, cancels the running cycle and waits for it. */
+  private async endSession(): Promise<void> {
+    this.session++
+    this.again = false
+    this.stopTimers()
+    this.cycleAbort?.abort()
+    const running = this.running
+    if (running) await running.catch(() => {})
   }
 
   status(): SyncStatus {
@@ -156,9 +185,11 @@ export class SyncService {
 
   async completeSignIn(auth: AuthResponse): Promise<SyncStatus> {
     if (!auth?.deviceToken || !auth.user?.id) throw new Error('The server returned an incomplete sign-in response.')
+    // A new session: a cycle of an earlier one (e.g. after the device was revoked) must not write.
+    await this.endSession()
     const prev = this.repo.state()
-    if (prev.userId && prev.userId !== auth.user.id) {
-      // Another account: nothing from the previous one may stay.
+    if (prev.userId !== auth.user.id && (prev.userId || prev.cursor !== 0 || this.repo.hasRemoteRows())) {
+      // Another account (or leftovers of an unfinished sign-out): nothing from it may stay.
       this.repo.purgeRemote()
       this.repo.updateState({ cursor: 0 })
     }
@@ -189,16 +220,21 @@ export class SyncService {
 
   async signOut(): Promise<SyncStatus> {
     const wasSignedIn = this.signedIn()
-    if (wasSignedIn) {
+    const revokeClient = wasSignedIn ? this.client() : null
+    const deviceId = this.store.deviceId
+    // No new cycle may start (no token), nothing more is queued; then cancel the running cycle and
+    // wait for it, so nothing it pulls or pushes lands after the purge.
+    this.stop()
+    this.deps.token.set('')
+    this.store.setSyncEnabled(false)
+    await this.endSession()
+    if (revokeClient) {
       try {
-        await this.client().revokeDevice(this.store.deviceId)
+        await revokeClient.revokeDevice(deviceId)
       } catch {
         /* offline or already revoked: the local sign-out still happens */
       }
     }
-    this.stop()
-    this.deps.token.set('')
-    this.store.setSyncEnabled(false)
     this.repo.purgeRemote()
     this.repo.updateState({ userId: null, user: null, workspaces: [], cursor: 0, lastError: null, lastSyncAt: null, lastPullAt: null, lastPushAt: null })
     this.deps.onCardsChanged?.()
@@ -209,6 +245,7 @@ export class SyncService {
 
   /** The server no longer accepts our token (device revoked): stop syncing, keep local data. */
   private authLost(): void {
+    this.session++
     this.stop()
     this.deps.token.set('')
     this.store.setSyncEnabled(false)
@@ -253,6 +290,7 @@ export class SyncService {
     const prev = this.store.syncPolicy
     if (samePolicy(prev, policy)) return
     this.store.syncPolicy = { ...policy, excludedCategories: [...policy.excludedCategories] }
+    this.store.scopeDirty = true
     if (this.signedIn() && prev.observations !== policy.observations) requeueObservations(this.store, policy.observations)
     this.nudge()
   }
@@ -297,24 +335,31 @@ export class SyncService {
 
   private async cycle(): Promise<void> {
     if (!this.signedIn()) return
+    const gen = this.session
+    const abort = new AbortController()
+    this.cycleAbort = abort
     this.syncing = true
     this.emitStatus()
     try {
       this.rejectNote = null
       // Pull first: edits from the user's other devices are merged locally before this device
       // re-sends any card, so a scope change never overrides an edit it hasn't seen yet.
-      await this.pull()
+      await this.pull(gen, abort.signal)
+      this.alive(gen)
       // Scopes may have changed (project confirmed, archived or deleted, a category edit, policy).
       rescopeCards(this.store)
-      await this.push()
+      await this.push(gen, abort.signal)
       if (this.needsDocBackfill) {
         this.needsDocBackfill = false
         this.backfillDocs()
-        await this.push()
+        await this.push(gen, abort.signal)
       }
+      this.alive(gen)
       this.failures = 0
       this.repo.updateState({ lastSyncAt: Date.now(), lastError: this.rejectNote })
     } catch (err) {
+      // The session ended while this cycle ran (sign-out / sign-in): drop the cycle silently.
+      if (err instanceof SessionChanged || gen !== this.session) return
       if (err instanceof HttpError && err.status === 401) {
         this.authLost()
         return
@@ -330,16 +375,18 @@ export class SyncService {
         }, delay)
       }
     } finally {
+      if (this.cycleAbort === abort) this.cycleAbort = null
       this.syncing = false
       this.emitStatus()
     }
   }
 
-  private async push(): Promise<void> {
+  private async push(gen: number, signal?: AbortSignal): Promise<void> {
     const userId = this.repo.state().userId
     if (!userId) return
-    const client = this.client()
+    const client = this.client(true, signal)
     for (let guard = 0; guard < 200; guard++) {
+      this.alive(gen)
       const entries = this.repo.pending(1000)
       if (entries.length === 0) return
       const batch = buildBatch(this.store, this.repo, this.deps.docs, userId, entries)
@@ -349,20 +396,24 @@ export class SyncService {
       try {
         res = await client.push(batch.changes)
       } catch (err) {
+        this.alive(gen)
         this.repo.markFailed(batch.used, err instanceof Error ? err.message : String(err))
         throw err
       }
+      this.alive(gen)
       if (typeof res?.serverTime === 'number') this.store.observeHlc(formatHlc(res.serverTime, 0, 'server'))
-      const rejected = new Map((res?.rejected ?? []).map((r) => [r.id, r.reason]))
+      // Rejections carry only an id; a batch never holds two changes with one id (buildBatch), and
+      // each rejection is matched to one change (keyed per change, not per id).
+      const reasons = matchRejections(batch.changes, Array.isArray(res?.rejected) ? res.rejected : [])
       const ok = []
       const bad = []
       for (let i = 0; i < batch.used.length; i++) {
-        const reason = rejected.get(batch.changes[i].id)
+        const reason = reasons[i]
         if (reason === undefined) ok.push(batch.used[i])
         else bad.push({ entry: batch.used[i], reason })
       }
       // Remember what the server now holds (card scope, observation uploaded) for accepted changes only.
-      commitAccepted(batch, (i) => !rejected.has(batch.changes[i].id))
+      commitAccepted(batch, (i) => reasons[i] === undefined)
       this.repo.markPushed(ok)
       if (bad.length) {
         this.repo.markRejected(bad)
@@ -372,12 +423,14 @@ export class SyncService {
     }
   }
 
-  private async pull(): Promise<void> {
-    const client = this.client()
+  private async pull(gen: number, signal?: AbortSignal): Promise<void> {
+    const client = this.client(true, signal)
     let cursor = this.repo.state().cursor
     const total: ApplyResult = { applied: 0, skipped: 0, cards: false, projects: false, docs: [] }
     for (let guard = 0; guard < 1000; guard++) {
+      this.alive(gen)
       const r = await client.pull(cursor, 1000)
+      this.alive(gen)
       const changes = Array.isArray(r?.changes) ? r.changes : []
       const res = this.applier.apply(changes)
       total.applied += res.applied

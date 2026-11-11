@@ -7,6 +7,7 @@ import type { Category, Settings } from '../../shared/types.ts'
 import type { DayGoalPlan } from '../../shared/daily-types.ts'
 import { DailyStore } from '../daily/store.ts'
 import { sanitizeSettingsPatch } from '../settings-schema.ts'
+import { detectCategoryRenames, withRenamedExclusions } from '../../shared/sync-categories.ts'
 import type { DocEntity } from './hooks.ts'
 import { withSyncMuted } from './hooks.ts'
 
@@ -60,7 +61,17 @@ export function makeDocSources(db: DatabaseSync, settings: SettingsLike | null):
         } else if (entity === 'user_doc' && id === 'categories' && settings && Array.isArray(payload)) {
           // Validated like a renderer patch: a bad payload from the server is ignored.
           const clean = sanitizeSettingsPatch({ categories: payload as Category[] }, () => false)
-          if (clean.categories) settings.update({ categories: clean.categories })
+          if (clean.categories) {
+            // A category renamed on another device keeps its "never upload" mark: the new name is
+            // added and the old one kept (existing cards still carry the old name).
+            const cur = settings.get()
+            const prevNames = (cur.categories ?? []).map((c) => c.name)
+            const nextNames = clean.categories.map((c) => c.name)
+            const excluded = cur.syncExcludedCategories ?? ['Personal']
+            const next = withRenamedExclusions(excluded, detectCategoryRenames(prevNames, nextNames), nextNames)
+            const changed = next.length !== excluded.length || next.some((n, i) => n !== excluded[i])
+            settings.update(changed ? { categories: clean.categories, syncExcludedCategories: next } : { categories: clean.categories })
+          }
         }
       })
     },

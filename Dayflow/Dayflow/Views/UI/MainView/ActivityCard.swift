@@ -18,6 +18,7 @@ struct ActivityCard: View {
   @EnvironmentObject private var appState: AppState
   @EnvironmentObject private var categoryStore: CategoryStore
   @EnvironmentObject private var retryCoordinator: RetryCoordinator
+  @ObservedObject private var cardSyncStore = CardSyncInfoStore.shared
   @AppStorage(TimelapsePreferences.saveAllTimelapsesToDiskKey) private var saveAllTimelapsesToDisk =
     false
 
@@ -268,7 +269,15 @@ struct ActivityCard: View {
           .lineLimit(1)
       }
 
-      if !isFailedCard(activity) {
+      // Dayflow Sync: project, private toggle, "from <device>". Only once the card's sync facts
+      // are known, so an empty section never leaves a gap (the lookup is started below).
+      if !isFailedCard(activity), let recordId = activity.recordId, cardSyncStore.info(for: recordId) != nil {
+        CardSyncDetailSection(recordId: recordId)
+      }
+
+      // Another device's card has no screenshots on this Mac. Held back until the sync facts are
+      // known, so a remote card never shows (then drops) the screenshot block.
+      if !isFailedCard(activity) && cardSyncStore.isLoaded(activity.recordId) && !isRemoteCard(activity) {
         if saveAllTimelapsesToDisk, let videoURL = activity.videoSummaryURL {
           VideoThumbnailView(
             videoURL: videoURL,
@@ -305,6 +314,9 @@ struct ActivityCard: View {
         } else {
           summaryContent(for: activity)
         }
+      }
+      .task(id: activity.recordId) {
+        if let id = activity.recordId { cardSyncStore.refresh(recordIds: [id]) }
       }
     }
   }
@@ -460,6 +472,10 @@ struct ActivityCard: View {
   private func categoryBadge(for raw: String) -> (name: String, indicator: Color)? {
     let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
+    if let fixedHex = syncFixedCategoryColorHex(trimmed) {
+      // "Out of scope" blocks from other devices (Dayflow Sync) have no CategoryStore entry.
+      return (name: trimmed, indicator: Color(hex: fixedHex))
+    }
 
     let normalized = trimmed.lowercased()
     let categories = categoryStore.categories
@@ -483,6 +499,10 @@ struct ActivityCard: View {
 
   private func isFailedCard(_ activity: TimelineActivity) -> Bool {
     return activity.title == "Processing failed"
+  }
+
+  private func isRemoteCard(_ activity: TimelineActivity) -> Bool {
+    cardSyncStore.info(for: activity.recordId)?.remote == true
   }
 
   @ViewBuilder

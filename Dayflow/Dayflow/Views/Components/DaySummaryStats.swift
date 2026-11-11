@@ -36,6 +36,15 @@ enum DaySummaryStats {
 
   /// Pre-computes per-card durations clipped to the current timeline day window (4 AM -> 4 AM).
   /// Overlap normalization is applied later based on active category configuration.
+  /// Dayflow Sync: only this Mac's cards. Other devices' cards overlap this Mac's own time, so
+  /// counting them would double the focus / distraction minutes and the category totals
+  /// (consistent with `fetchTotalMinutesTracked`, which counts local cards only).
+  static func localCardsOnly(_ cards: [TimelineCard]) -> [TimelineCard] {
+    let remote = MacSyncLookup.remoteCardIds(cards.compactMap { $0.recordId })
+    guard !remote.isEmpty else { return cards }
+    return cards.filter { card in card.recordId.map { !remote.contains($0) } ?? true }
+  }
+
   static func precomputeCardDurations(_ cards: [TimelineCard]) -> [CardWithDuration] {
     cards.compactMap { card in
       guard let startMinutes = timelineMinutes(for: card.startTimestamp),
@@ -279,7 +288,7 @@ enum DaySummaryStats {
       storageManager: storageManager,
       categories: categories
     )
-    let cards = storageManager.fetchTimelineCards(forDay: dayInfo.dayString)
+    let cards = localCardsOnly(storageManager.fetchTimelineCards(forDay: dayInfo.dayString))
     let precomputed = precomputeCardDurations(cards)
     let categoryDurations = computeCategoryDurations(from: precomputed, categories: categories)
     let focusDuration = computeTotalFocusTime(
@@ -357,7 +366,7 @@ enum DaySummaryStats {
     storageManager: StorageManaging,
     categories: [TimelineCategory]
   ) -> (byID: [String: TimeInterval], byName: [String: TimeInterval]) {
-    let cards = storageManager.fetchTimelineCards(forDay: dayString)
+    let cards = localCardsOnly(storageManager.fetchTimelineCards(forDay: dayString))
     let precomputed = precomputeCardDurations(cards)
     let categoryDurations = computeCategoryDurations(from: precomputed, categories: categories)
     return durationMaps(from: categoryDurations)

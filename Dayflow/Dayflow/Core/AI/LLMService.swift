@@ -786,7 +786,8 @@ final class LLMService: LLMServicing {
           // Fetch existing timeline cards that overlap with the recent batching window.
           let existingTimelineCards = StorageManager.shared.fetchTimelineCardsByTimeRange(
             from: windowStartTime,
-            to: currentTime
+            to: currentTime,
+            localOnly: true  // Dayflow Sync: other devices' cards are never analysis input
           )
           let hasPreviousCardWithinFiveMinutes = StorageManager.shared.hasTimelineCardConnected(
             toBatchStartingAt: batchStartTime,

@@ -520,6 +520,8 @@ enum WeeklyDashboardBuilder {
   }
 
   private static func fallbackColorHex(for key: String) -> String {
+    // "Out of scope" blocks from Dayflow Sync are always neutral grey.
+    if let fixed = syncFixedCategoryColorHex(key) { return fixed }
     let palette = ["93BCFF", "DE9DFC", "6CDACD", "FFA189", "FFC6B7", otherColorHex]
     let hash = key.utf8.reduce(5381) { current, byte in
       ((current << 5) &+ current) &+ Int(byte)
