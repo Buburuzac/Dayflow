@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ScreenshotInfo } from '../../../shared/types.ts'
 import type { TimelapseCardData, TimelapseInfo, TimelapseProgress } from '../../../shared/timelapse-types.ts'
+import { clock24 } from '../dates.ts'
 import './timelapse.css'
 
 const call = <T,>(channel: string, ...args: unknown[]) => window.dayflow.call<T>(channel, ...args)
@@ -120,7 +121,7 @@ function TimelapseModal({ cardId, onClose }: { cardId: number; onClose: () => vo
             <div className="tlx-title">{card?.title ?? 'Timelapse'}</div>
             {card && (
               <div className="tlx-sub">
-                {card.startTime} to {card.endTime}
+                {clock24(card.startTs)} to {clock24(card.endTs)}
                 {data && data.frames.length > 0 && ` · ${data.frames.length} screenshots`}
               </div>
             )}

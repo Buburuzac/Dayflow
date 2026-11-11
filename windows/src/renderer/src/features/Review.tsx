@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ScreenshotInfo, SettingsWithSecrets, TimelineCard } from '../../../shared/types.ts'
 import type { ReviewDayData, ReviewRating, ReviewSummary } from '../../../shared/review-types.ts'
-import { currentDay, dayLabel, fmtDuration, shiftDay } from '../dates.ts'
+import { clock24, currentDay, dayLabel, fmtDuration, shiftDay } from '../dates.ts'
 import './review.css'
 
 const call = <T,>(channel: string, ...args: unknown[]) => window.dayflow.call<T>(channel, ...args)
@@ -421,7 +421,7 @@ function ReviewCard({
             {card.category}
           </span>
           <span className="rv-pill">
-            {card.startTime} - {card.endTime}
+            {clock24(card.startTs)} - {clock24(card.endTs)}
           </span>
         </div>
         <div className="rv-summary">{card.summary || card.detailedSummary}</div>
