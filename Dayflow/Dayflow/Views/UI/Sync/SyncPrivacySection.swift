@@ -34,7 +34,7 @@ struct SyncPrivacySection: View {
           label: String(localized: "Upload work without a confirmed project as \"Out of scope\" (time only)"),
           subtitle: String(
             localized:
-              "Only cards confirmed for a project upload with their title and details. Everything else shows on your other devices and the server as an \"Out of scope\" block, without what it was."
+              "Only cards confirmed for a project upload with their title and details. Everything else shows on your other devices and the server as an \"Out of scope\" block, without what it was. Workspace admins see your timeline: project work at the level you share, everything else as time only. Your Account page in the web dashboard lists who opened it."
           )
         ) {
           SettingsToggle(isOn: outOfScopeBinding)

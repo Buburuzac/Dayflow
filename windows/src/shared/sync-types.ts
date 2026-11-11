@@ -188,6 +188,38 @@ export interface ProjectReport {
   byCategory?: { category: string; minutes: number }[]
 }
 
+/**
+ * (sync server) GET /api/workspaces/:id/report — every member's confirmed project time across the
+ * workspace. Built from the same team projection as ProjectReport: private cards, unconfirmed
+ * guesses and work outside projects never appear.
+ */
+export interface WorkspaceReport {
+  workspaceId: string
+  from: string
+  to: string
+  totalMinutes: number
+  /** every current member, including those without time in the range */
+  users: {
+    userId: string
+    userName: string
+    email: string
+    avatarUrl: string | null
+    role: WorkspaceRole
+    minutes: number
+    activeDays: number
+    projectCount: number
+    /** hours of timesheet lines sent to Odoo for days in the range */
+    odooHours: number
+    /** latest last_seen_at of the user's non-revoked devices, ms; null = never synced */
+    lastSeenAt: number | null
+  }[]
+  /** projects with time in the range */
+  projects: { projectId: string; name: string; color: string; archived: boolean; minutes: number; userCount: number }[]
+  byUserProject: { userId: string; projectId: string; minutes: number }[]
+  byUserDay: { userId: string; day: string; minutes: number }[]
+  byDay: { day: string; minutes: number }[]
+}
+
 // ---- Odoo timesheets ----
 
 export interface TimesheetProposal {
@@ -304,6 +336,53 @@ export interface TimelineResponse {
   cards: TimelineCard[]
   /** payload of the caller's user_doc 'categories' (null when never synced) */
   categories?: unknown
+}
+
+/**
+ * (sync server) GET /api/workspaces/:id/users — workspace admins: every member with their devices and
+ * time for the range. trackedMinutes counts every synced card (private, deleted and error cards excluded;
+ * personal cards never reach the server; work confirmed only for other workspaces' projects excluded); projectMinutes is the confirmed project time of the team
+ * projection. Revoked devices are listed only when they have time in the range.
+ */
+export interface WorkspaceUsersResponse {
+  workspaceId: string
+  from: string
+  to: string
+  users: {
+    userId: string
+    userName: string
+    email: string
+    avatarUrl: string | null
+    role: WorkspaceRole
+    /** the caller's role is below this member's (an admin looking at an owner): no own time, no timeline */
+    restricted: boolean
+    /** null when restricted */
+    trackedMinutes: number | null
+    projectMinutes: number
+    /** null when restricted */
+    activeDays: number | null
+    lastSeenAt: number | null
+    /** minutes: null when restricted */
+    devices: (DeviceInfo & { minutes: number | null })[]
+  }[]
+}
+
+/** (sync server) GET /api/me/timeline-views — who opened the caller's timeline (latest 100). */
+export interface TimelineViewsResponse {
+  views: { viewerName: string; viewerEmail: string; workspaceName: string; from: string; to: string; viewedAt: number }[]
+}
+
+/**
+ * (sync server) GET /api/workspaces/:id/members/:userId/timeline — a member's cards from all of their
+ * devices, as a workspace admin may see them. Each card carries `shareLevel`: the lowest share level
+ * among its confirmed projects in this workspace (content is cut to it), or null for work outside
+ * those projects (time only, title "Out of scope"). Private, deleted and error cards, and work confirmed only
+ * for projects of other workspaces, are left out. Admins may not open an owner's timeline; every view by
+ * someone else is logged (GET /api/me/timeline-views).
+ */
+export interface MemberTimelineResponse extends TimelineResponse {
+  user: { userId: string; userName: string; email: string; avatarUrl: string | null; role: WorkspaceRole }
+  cards: (TimelineCard & { shareLevel: ShareLevel | null })[]
 }
 
 /** GET /api/projects/:id/feed?from&to */

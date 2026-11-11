@@ -21,3 +21,8 @@ export function useApp(): AppState {
 }
 
 export const isAdminRole = (role: string | undefined) => role === 'owner' || role === 'admin'
+
+const RANK: Record<string, number> = { viewer: 0, member: 1, admin: 2, owner: 3 }
+/** Admins open the timelines of admins, members and viewers; only owners open an owner's timeline. */
+export const canViewTimeline = (callerRole: string | undefined, targetRole: string) =>
+  isAdminRole(callerRole) && (RANK[callerRole ?? ''] ?? -1) >= (RANK[targetRole] ?? 99)

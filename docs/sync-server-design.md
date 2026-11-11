@@ -59,7 +59,7 @@ projects(id uuid, workspace_id, name, color, description, rules jsonb, default_s
          , archived, hlc, server_seq)
 project_members(project_id, user_id, share_level: 'time'|'cards'|'detailed' | null = use project default)
 
--- personal synced records (visible to the owner's devices and owner's dashboard only)
+-- personal synced records (the user's devices and dashboard; workspace admins get a cut-down view, see "Admin views")
 cards(id, user_id, device_id, start_ts, end_ts, day, title, summary, detailed_summary, category, subcategory,
       metadata jsonb, is_error, hlc, field_hlc jsonb, deleted, server_seq)
 card_projects(card_id, project_id, share real 0..1, source: 'manual'|'rule'|'llm', confidence real,
@@ -121,6 +121,20 @@ interface Change {
 - Nothing from excluded apps beyond what already ended up in cards. Never screenshots, accessibility logs, chat history.
 - Personal records go to the server encrypted at rest (pg volume), readable by the owner's devices and the server
   (needed for the dashboard and team projection). E2E encryption is a later option.
+
+### Admin views
+
+Workspace admins and owners (`GET /api/workspaces/:id/report`, `/users`, `/members/:userId/timeline`) see:
+- the team projection (`project_entries`), as every member does in project reports;
+- a member's cards, lane per device, cut on the server: cards confirmed for projects of this workspace at the
+  lowest share level among those projects (`time`: project names instead of the title, no text; `cards`: title,
+  summary, category; `detailed`: plus detailed summary and distractions); every other card as a time-only
+  "Out of scope" block. `appSites` and category descriptions are never returned;
+- never private, deleted or error cards, and never work confirmed only for projects of other workspaces.
+
+An admin may not open an owner's timeline or see an owner's own tracked time (owners see everyone). Every view
+of someone else's timeline is stored in `timeline_views` (deduplicated per viewer, member and period for
+10 minutes) and listed to the member by `GET /api/me/timeline-views` (dashboard Account page).
 
 ## Projects and assignment
 

@@ -180,8 +180,8 @@ function Report({ project, from, to }: { project: Project; from: string; to: str
         <Empty title="No time in this period" />
       ) : (
         <div className="report-grid">
-          <ChartCard title="By member">
-            <MemberBars rows={members.map((m) => ({ id: m.userId, name: m.userName, minutes: m.minutes }))} color={project.color} />
+          <ChartCard title="By member" extra={<span className="muted chart-note">share of the project</span>}>
+            <MemberBars rows={members.map((m) => ({ id: m.userId, name: m.userName, minutes: m.minutes }))} color={project.color} total={r.totalMinutes} />
           </ChartCard>
           <ChartCard title="By day">
             <DayBars days={days.map((d) => ({ day: d, minutes: byDay.get(d) ?? 0 }))} color={project.color} />

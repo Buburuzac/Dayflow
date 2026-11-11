@@ -1,10 +1,20 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { requireProjectRole } from '../access'
+import { requireProjectRole, requireWorkspaceRole, roleAtLeast } from '../access'
 import { authenticate, deviceInfo } from '../auth/auth'
 import type { Ctx } from '../context'
-import { Day, DayRange, IdParam, parse } from '../http'
-import type { ProjectEntry, ProjectReport, ProjectStandupResponse, ShareLevel, TimelineResponse } from '../shared'
+import { Day, DayRange, forbidden, IdParam, notFound, parse, Uuid } from '../http'
+import type {
+  MemberTimelineResponse,
+  ProjectEntry,
+  ProjectReport,
+  ProjectStandupResponse,
+  ShareLevel,
+  TimelineResponse,
+  TimelineViewsResponse,
+  WorkspaceReport,
+  WorkspaceUsersResponse,
+} from '../shared'
 
 export function entryView(r: any): ProjectEntry {
   return {
@@ -164,6 +174,234 @@ export async function teamRoutes(app: FastifyInstance, ctx: Ctx) {
     }
   })
 
+  // Everyone's confirmed project time across the workspace (admin view). Same projection as the
+  // project reports, so private cards, unconfirmed guesses and non-project work never show up.
+  app.get('/api/workspaces/:id/report', async (req): Promise<WorkspaceReport> => {
+    const auth = await authenticate(ctx, req)
+    const { id } = parse(IdParam, req.params)
+    const { from, to } = parse(RangeQ, req.query)
+    await requireWorkspaceRole(ctx.db, id, auth.userId, 'admin')
+    const args = [id, from, to]
+    const scoped = `FROM project_entries e JOIN projects p ON p.id = e.project_id AND NOT p.deleted
+                    WHERE p.workspace_id = $1 AND e.day BETWEEN $2 AND $3`
+    const [users, projects, userProject, userDay, day] = await Promise.all([
+      ctx.db.query(
+        `SELECT u.id, COALESCE(NULLIF(u.name,''), u.email) AS name, u.email, u.avatar_url, m.role,
+                COALESCE(t.m, 0) AS minutes, COALESCE(t.days, 0) AS days, COALESCE(t.projects, 0) AS projects,
+                COALESCE(o.hours, 0) AS odoo_hours,
+                (SELECT max(d.last_seen_at) FROM devices d WHERE d.user_id = u.id AND d.revoked_at IS NULL) AS last_seen
+           FROM memberships m JOIN users u ON u.id = m.user_id
+           LEFT JOIN (SELECT e.user_id, SUM(e.minutes) AS m, COUNT(DISTINCT e.day) AS days, COUNT(DISTINCT e.project_id) AS projects
+                        ${scoped} GROUP BY e.user_id) t ON t.user_id = u.id
+           LEFT JOIN (SELECT user_id, SUM(hours) AS hours FROM timesheet_exports
+                       WHERE workspace_id = $1 AND status = 'sent' AND day BETWEEN $2 AND $3 GROUP BY user_id) o ON o.user_id = u.id
+          WHERE m.workspace_id = $1
+          ORDER BY minutes DESC, name`,
+        args,
+      ),
+      ctx.db.query(
+        `SELECT p.id, p.name, p.color, p.archived, SUM(e.minutes) AS m, COUNT(DISTINCT e.user_id) AS users
+           ${scoped} GROUP BY p.id, p.name, p.color, p.archived ORDER BY m DESC`,
+        args,
+      ),
+      ctx.db.query(`SELECT e.user_id, e.project_id, SUM(e.minutes) AS m ${scoped} GROUP BY e.user_id, e.project_id`, args),
+      ctx.db.query(`SELECT e.user_id, e.day, SUM(e.minutes) AS m ${scoped} GROUP BY e.user_id, e.day ORDER BY e.day`, args),
+      ctx.db.query(`SELECT e.day, SUM(e.minutes) AS m ${scoped} GROUP BY e.day ORDER BY e.day`, args),
+    ])
+    const r2 = (n: number) => Math.round(Number(n) * 100) / 100
+    return {
+      workspaceId: id,
+      from,
+      to,
+      totalMinutes: r2(projects.rows.reduce((s, x) => s + Number(x.m), 0)),
+      users: users.rows.map((x) => ({
+        userId: x.id,
+        userName: x.name,
+        email: x.email,
+        avatarUrl: x.avatar_url,
+        role: x.role,
+        minutes: r2(x.minutes),
+        activeDays: Number(x.days),
+        projectCount: Number(x.projects),
+        odooHours: r2(x.odoo_hours),
+        lastSeenAt: x.last_seen ? new Date(x.last_seen).getTime() : null,
+      })),
+      projects: projects.rows.map((x) => ({
+        projectId: x.id,
+        name: x.name,
+        color: x.color,
+        archived: x.archived,
+        minutes: r2(x.m),
+        userCount: Number(x.users),
+      })),
+      byUserProject: userProject.rows.map((x) => ({ userId: x.user_id, projectId: x.project_id, minutes: r2(x.m) })),
+      byUserDay: userDay.rows.map((x) => ({ userId: x.user_id, day: x.day, minutes: r2(x.m) })),
+      byDay: day.rows.map((x) => ({ day: x.day, minutes: r2(x.m) })),
+    }
+  })
+
+  // Users directory (admin view): every member, their devices and how much each device recorded.
+  app.get('/api/workspaces/:id/users', async (req): Promise<WorkspaceUsersResponse> => {
+    const auth = await authenticate(ctx, req)
+    const { id } = parse(IdParam, req.params)
+    const { from, to } = parse(RangeQ, req.query)
+    const callerRole = await requireWorkspaceRole(ctx.db, id, auth.userId, 'admin')
+    const [members, devices, tracked, project] = await Promise.all([
+      ctx.db.query(
+        `SELECT u.id, COALESCE(NULLIF(u.name,''), u.email) AS name, u.email, u.avatar_url, m.role
+           FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = $1 ORDER BY 2`,
+        [id],
+      ),
+      ctx.db.query(
+        `SELECT d.id, d.user_id, d.name, d.platform, d.last_seen_at, d.revoked_at
+           FROM devices d JOIN memberships m ON m.user_id = d.user_id AND m.workspace_id = $1 ORDER BY d.created_at`,
+        [id],
+      ),
+      ctx.db.query(
+        `SELECT c.user_id, c.device_id, SUM(GREATEST(0, c.end_ts - c.start_ts)) / 60000.0 AS m, array_agg(DISTINCT c.day) AS days
+           FROM cards c JOIN memberships m ON m.user_id = c.user_id AND m.workspace_id = $1
+          WHERE c.day BETWEEN $2 AND $3 AND NOT c.deleted AND NOT c.is_error AND NOT c.private AND ${notOtherWorkspaceWork('c', '$1')}
+          GROUP BY c.user_id, c.device_id`,
+        [id, from, to],
+      ),
+      ctx.db.query(
+        `SELECT e.user_id, SUM(e.minutes) AS m FROM project_entries e JOIN projects p ON p.id = e.project_id AND NOT p.deleted
+          WHERE p.workspace_id = $1 AND e.day BETWEEN $2 AND $3 GROUP BY e.user_id`,
+        [id, from, to],
+      ),
+    ])
+    const r2 = (n: number) => Math.round(Number(n) * 100) / 100
+    const byDevice = new Map(tracked.rows.map((t) => [`${t.user_id}|${t.device_id}`, Number(t.m)]))
+    const projectBy = new Map(project.rows.map((p) => [p.user_id, Number(p.m)]))
+    return {
+      workspaceId: id,
+      from,
+      to,
+      users: members.rows.map((u) => {
+        // an admin does not see an owner's own time (owners see everyone)
+        const restricted = !roleAtLeast(callerRole, u.role)
+        const rows = restricted ? [] : tracked.rows.filter((t) => t.user_id === u.id)
+        const days = new Set(rows.flatMap((t) => t.days as string[]))
+        const devs = devices.rows
+          .filter((d) => d.user_id === u.id)
+          .map((d) => ({ ...deviceInfo(d), minutes: restricted ? null : r2(byDevice.get(`${u.id}|${d.id}`) ?? 0) }))
+          .filter((d) => !d.revoked || (d.minutes ?? 0) > 0)
+        const seen = devs.filter((d) => !d.revoked && d.lastSeenAt).map((d) => d.lastSeenAt as number)
+        return {
+          userId: u.id,
+          userName: u.name,
+          email: u.email,
+          avatarUrl: u.avatar_url,
+          role: u.role,
+          restricted,
+          trackedMinutes: restricted ? null : r2(rows.reduce((s, t) => s + Number(t.m), 0)),
+          projectMinutes: r2(projectBy.get(u.id) ?? 0),
+          activeDays: restricted ? null : days.size,
+          lastSeenAt: seen.length ? Math.max(...seen) : null,
+          devices: devs,
+        }
+      }),
+    }
+  })
+
+  // A member's timeline as a workspace admin may see it: every synced card of theirs, lane per device,
+  // with content cut to what they share. Cards confirmed for projects of this workspace show the
+  // lowest share level among those projects; anything else is a time-only "Out of scope" block.
+  // Private, deleted and error cards never appear (personal cards never reach the server at all).
+  app.get('/api/workspaces/:id/members/:userId/timeline', async (req): Promise<MemberTimelineResponse> => {
+    const auth = await authenticate(ctx, req)
+    const { id, userId } = parse(z.object({ id: Uuid, userId: Uuid }), req.params)
+    const { from, to } = parse(RangeQ, req.query)
+    const callerRole = await requireWorkspaceRole(ctx.db, id, auth.userId, 'admin')
+    const who = await ctx.db.query(
+      `SELECT u.id, COALESCE(NULLIF(u.name,''), u.email) AS name, u.email, u.avatar_url, m.role
+         FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = $1 AND m.user_id = $2`,
+      [id, userId],
+    )
+    if (!who.rowCount) throw notFound('member not found')
+    if (!roleAtLeast(callerRole, who.rows[0].role)) throw forbidden('only an owner can view an owner’s timeline')
+    if (userId !== auth.userId) await logTimelineView(ctx, id, auth.userId, userId, from, to)
+    const [devices, cards, links, cats] = await Promise.all([
+      ctx.db.query(`SELECT id, name, platform, last_seen_at, revoked_at FROM devices WHERE user_id = $1 ORDER BY created_at`, [userId]),
+      ctx.db.query(
+        `SELECT id, device_id, day, start_ts, end_ts, title, summary, detailed_summary, category, subcategory, metadata
+           FROM cards c WHERE user_id = $1 AND day BETWEEN $2 AND $3 AND NOT deleted AND NOT is_error AND NOT private
+            AND ${notOtherWorkspaceWork('c', '$4')}
+          ORDER BY start_ts`,
+        [userId, from, to, id],
+      ),
+      ctx.db.query(
+        `SELECT cp.card_id, cp.project_id, cp.share, cp.source, cp.confidence, p.name, p.color,
+                COALESCE(pm.share_level, p.default_share) AS lvl
+           FROM card_projects cp JOIN cards c ON c.id = cp.card_id AND c.user_id = cp.user_id
+           JOIN projects p ON p.id = cp.project_id AND NOT p.deleted AND p.workspace_id = $4
+           LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = cp.user_id AND NOT pm.deleted
+          WHERE cp.user_id = $1 AND cp.confirmed AND NOT cp.deleted AND c.day BETWEEN $2 AND $3`,
+        [userId, from, to, id],
+      ),
+      ctx.db.query(`SELECT payload FROM user_docs WHERE id = $1 AND NOT deleted`, [`${userId}:categories`]),
+    ])
+    const RANK: Record<ShareLevel, number> = { time: 0, cards: 1, detailed: 2 }
+    const byCard = new Map<string, { level: ShareLevel; projects: MemberTimelineResponse['cards'][number]['projects'] }>()
+    for (const l of links.rows) {
+      const cur = byCard.get(l.card_id) ?? { level: 'detailed' as ShareLevel, projects: [] }
+      if (RANK[l.lvl as ShareLevel] < RANK[cur.level]) cur.level = l.lvl
+      cur.projects.push({ projectId: l.project_id, projectName: l.name, color: l.color, share: l.share, source: l.source, confidence: l.confidence, confirmed: true })
+      byCard.set(l.card_id, cur)
+    }
+    const u = who.rows[0]
+    return {
+      from,
+      to,
+      user: { userId: u.id, userName: u.name, email: u.email, avatarUrl: u.avatar_url, role: u.role },
+      devices: devices.rows.map((d) => deviceInfo(d)),
+      categories: categoryColors(cats.rows[0]?.payload),
+      cards: cards.rows.map((c) => {
+        const link = byCard.get(c.id)
+        const level = link?.level ?? null
+        const shown = level === 'cards' || level === 'detailed'
+        return {
+          id: c.id,
+          deviceId: c.device_id,
+          day: c.day,
+          startTs: c.start_ts,
+          endTs: c.end_ts,
+          title: !link ? 'Out of scope' : shown ? c.title : link.projects.map((p) => p.projectName).join(', '),
+          summary: shown ? c.summary : '',
+          detailedSummary: level === 'detailed' ? c.detailed_summary : '',
+          category: !link ? 'Out of scope' : shown ? c.category : '',
+          subcategory: shown ? c.subcategory : '',
+          metadata: level === 'detailed' && Array.isArray(c.metadata?.distractions) ? { distractions: c.metadata.distractions } : {},
+          isError: false,
+          projects: link?.projects ?? [],
+          shareLevel: level,
+        }
+      }),
+    }
+  })
+
+  // The caller's own audit trail: who opened their timeline, when, and for which period.
+  app.get('/api/me/timeline-views', async (req): Promise<TimelineViewsResponse> => {
+    const auth = await authenticate(ctx, req)
+    const r = await ctx.db.query(
+      `SELECT v.viewed_at, v.range_from, v.range_to, w.name AS workspace_name,
+              COALESCE(NULLIF(u.name,''), u.email) AS viewer_name, u.email AS viewer_email
+         FROM timeline_views v JOIN users u ON u.id = v.viewer_id JOIN workspaces w ON w.id = v.workspace_id
+        WHERE v.user_id = $1 ORDER BY v.viewed_at DESC LIMIT 100`,
+      [auth.userId],
+    )
+    return {
+      views: r.rows.map((x) => ({
+        viewerName: x.viewer_name,
+        viewerEmail: x.viewer_email,
+        workspaceName: x.workspace_name,
+        from: x.range_from,
+        to: x.range_to,
+        viewedAt: new Date(x.viewed_at).getTime(),
+      })),
+    }
+  })
+
   app.get('/api/projects/:id/standup', async (req): Promise<ProjectStandupResponse> => {
     const auth = await authenticate(ctx, req)
     const { id } = parse(IdParam, req.params)
@@ -219,4 +457,39 @@ export async function teamRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     return { projectId: id, day, members: out }
   })
+}
+
+/** Only names and colours of the member's categories (descriptions are the user's own prompt text). */
+function categoryColors(payload: unknown): { name: string; color: string }[] | null {
+  let v: unknown = payload
+  for (let i = 0; i < 3 && v && typeof v === 'object' && !Array.isArray(v); i++) v = (v as any).categories ?? (v as any).payload ?? null
+  if (!Array.isArray(v)) return null
+  return v
+    .filter((c) => c && typeof c === 'object' && typeof c.name === 'string')
+    .map((c) => ({ name: c.name, color: typeof c.color === 'string' ? c.color : '' }))
+}
+
+/**
+ * SQL condition for a card alias: the card is not work confirmed only for projects of other workspaces.
+ * Such cards stay out of this workspace's admin views; cards without any project ("Out of scope") remain.
+ */
+function notOtherWorkspaceWork(card: string, workspaceParam: string): string {
+  const link = (cmp: '=' | '<>') => `EXISTS (
+    SELECT 1 FROM card_projects x JOIN projects xp ON xp.id = x.project_id AND NOT xp.deleted
+     WHERE x.card_id = ${card}.id AND x.user_id = ${card}.user_id AND x.confirmed AND NOT x.deleted AND xp.workspace_id ${cmp} ${workspaceParam})`
+  return `(NOT ${link('<>')} OR ${link('=')})`
+}
+
+const VIEW_DEDUP_MS = 10 * 60_000
+
+/** Records an admin opening a member's timeline; the same viewer, member and period count once per 10 minutes. */
+async function logTimelineView(ctx: Ctx, workspaceId: string, viewerId: string, userId: string, from: string, to: string) {
+  const now = new Date(ctx.now())
+  await ctx.db.query(
+    `INSERT INTO timeline_views(workspace_id, viewer_id, user_id, range_from, range_to, viewed_at)
+     SELECT $1, $2, $3, $4, $5, $6
+      WHERE NOT EXISTS (SELECT 1 FROM timeline_views WHERE viewer_id = $2 AND user_id = $3 AND workspace_id = $1
+                          AND range_from = $4 AND range_to = $5 AND viewed_at > $7)`,
+    [workspaceId, viewerId, userId, from, to, now, new Date(now.getTime() - VIEW_DEDUP_MS)],
+  )
 }

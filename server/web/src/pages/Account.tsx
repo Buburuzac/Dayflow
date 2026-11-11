@@ -4,6 +4,7 @@ import type { DeviceInfo } from '../api/types.ts'
 import { useApp } from '../app-context.ts'
 import { Avatar, Modal } from '../components/ui.tsx'
 import { relativeTime } from '../lib/format.ts'
+import { useAsync } from '../lib/hooks.ts'
 import { DeviceIcon } from './MyTime.tsx'
 
 export function Account({ onSignedOut, onChanged }: { onSignedOut: () => void; onChanged: () => void }) {
@@ -32,6 +33,8 @@ export function Account({ onSignedOut, onChanged }: { onSignedOut: () => void; o
           </div>
         </div>
       </section>
+
+      <TimelineViews />
 
       <section className="panel">
         <h2>Devices</h2>
@@ -120,5 +123,41 @@ export function Account({ onSignedOut, onChanged }: { onSignedOut: () => void; o
         </Modal>
       )}
     </div>
+  )
+}
+
+/** Who opened the caller's timeline (workspace admins and owners). */
+function TimelineViews() {
+  const views = useAsync(() => api.timelineViews(), [])
+  if (!views.data?.length) return null
+  return (
+    <section className="panel">
+      <h2>Who viewed your timeline</h2>
+      <p className="muted small">
+        Workspace admins and owners can open your timeline: project work at the level you share, everything else as time only. Personal and private cards never leave your computers.
+      </p>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Who</th>
+            <th>Workspace</th>
+            <th>Period</th>
+            <th>When</th>
+          </tr>
+        </thead>
+        <tbody>
+          {views.data.map((v, i) => (
+            <tr key={i}>
+              <td>
+                {v.viewerName} <span className="muted small">{v.viewerEmail}</span>
+              </td>
+              <td className="muted">{v.workspaceName}</td>
+              <td className="muted nowrap">{v.from === v.to ? v.from : `${v.from} – ${v.to}`}</td>
+              <td className="muted nowrap">{relativeTime(v.viewedAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   )
 }

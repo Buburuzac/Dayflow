@@ -43,15 +43,21 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
   )
 }
 
+const PERSON_HUES = ['#F3854B', '#B984FF', '#6AADFF', '#4CB8A4', '#E07AA8', '#E9B949']
+
+/** Stable colour per person (avatar background, contribution bars). */
+export function personColor(name: string): string {
+  let h = 0
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  return PERSON_HUES[h % PERSON_HUES.length]
+}
+
 export function Avatar({ name, url, size = 28 }: { name: string; url?: string | null; size?: number }) {
   const [broken, setBroken] = useState(false)
   if (url && !broken)
     return <img className="avatar" src={url} alt="" width={size} height={size} onError={() => setBroken(true)} referrerPolicy="no-referrer" />
-  let h = 0
-  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0
-  const hues = ['#F3854B', '#B984FF', '#6AADFF', '#4CB8A4', '#E07AA8', '#E9B949']
   return (
-    <span className="avatar initials" style={{ width: size, height: size, fontSize: size * 0.4, background: hues[h % hues.length] }}>
+    <span className="avatar initials" style={{ width: size, height: size, fontSize: size * 0.4, background: personColor(name) }}>
       {initials(name)}
     </span>
   )

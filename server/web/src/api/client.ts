@@ -4,6 +4,7 @@ import { normalizeCategories, type Category } from '../lib/categories.ts'
 import type {
   Invite,
   Member,
+  MemberTimelineResponse,
   MeResponse,
   EmployeeMapEntry,
   OdooConnection,
@@ -23,7 +24,10 @@ import type {
   TimelineResponse,
   TimesheetSubmitRequest,
   TimesheetSubmitResult,
+  WorkspaceReport,
   WorkspaceRole,
+  WorkspaceUsersResponse,
+  TimelineViewsResponse,
 } from './types.ts'
 
 export class ApiError extends Error {
@@ -121,6 +125,24 @@ export const api = {
     return { from, to, cards, devices: r.devices ?? [], categories: normalizeCategories(r.categories) }
   },
 
+  async timelineViews(): Promise<TimelineViewsResponse['views']> {
+    return list<TimelineViewsResponse['views'][number]>(await request<unknown>('GET', '/api/me/timeline-views'), 'views')
+  },
+  async workspaceUsers(workspaceId: string, from: string, to: string): Promise<WorkspaceUsersResponse> {
+    const r = await request<Partial<WorkspaceUsersResponse>>('GET', `/api/workspaces/${enc(workspaceId)}/users?${qs({ from, to })}`)
+    return { workspaceId, from, to, users: (r.users ?? []).map((u) => ({ ...u, devices: u.devices ?? [] })) }
+  },
+  async memberTimeline(workspaceId: string, userId: string, from: string, to: string): Promise<MemberTimelineResponse & { categories: Category[] }> {
+    const r = await request<MemberTimelineResponse>('GET', `/api/workspaces/${enc(workspaceId)}/members/${enc(userId)}/timeline?${qs({ from, to })}`)
+    return {
+      ...r,
+      devices: r.devices ?? [],
+      categories: normalizeCategories(r.categories),
+      // cards shared as time only carry no category
+      cards: (r.cards ?? []).map((c) => ({ ...c, category: c.category || 'Not shared', metadata: c.metadata ?? {}, projects: c.projects ?? [] })),
+    }
+  },
+
   async projects(workspaceId: string): Promise<Project[]> {
     const raw = await request<unknown>('GET', `/api/workspaces/${enc(workspaceId)}/projects?includeArchived=1`)
     return list<Project>(raw, 'projects').map(normProject)
@@ -147,6 +169,20 @@ export const api = {
       byMember: r.byMember ?? [],
       byDay: r.byDay ?? [],
       byMemberDay: r.byMemberDay ?? [],
+    }
+  },
+  async workspaceReport(workspaceId: string, from: string, to: string): Promise<WorkspaceReport> {
+    const r = await request<Partial<WorkspaceReport>>('GET', `/api/workspaces/${enc(workspaceId)}/report?${qs({ from, to })}`)
+    return {
+      workspaceId,
+      from,
+      to,
+      totalMinutes: r.totalMinutes ?? 0,
+      users: r.users ?? [],
+      projects: r.projects ?? [],
+      byUserProject: r.byUserProject ?? [],
+      byUserDay: r.byUserDay ?? [],
+      byDay: r.byDay ?? [],
     }
   },
   async standup(projectId: string, day: string): Promise<StandupResponse> {

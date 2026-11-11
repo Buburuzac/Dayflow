@@ -32,6 +32,10 @@ export type {
   WorkspaceRole,
   ProjectFeedResponse,
   ProjectStandupResponse,
+  WorkspaceReport,
+  MemberTimelineResponse,
+  WorkspaceUsersResponse,
+  TimelineViewsResponse,
 } from '../../../../windows/src/shared/sync-types.ts'
 
 export interface Project extends ProjectData {
@@ -41,7 +45,10 @@ export interface Project extends ProjectData {
 export type ProjectInput = Partial<Omit<ProjectData, 'workspaceId' | 'odoo'>> & { rules?: ProjectRules; odoo?: OdooMapping | null }
 
 /** GET /api/me/timeline — shared TimelineResponse plus the optional categories doc (not yet served). */
-export type TimelineCard = SharedTimelineCard
+export type TimelineCard = SharedTimelineCard & {
+  /** member timelines (admin view) only: level the card is shown at; null = outside projects, time only */
+  shareLevel?: ShareLevel | null
+}
 export interface TimelineResponse extends SharedTimelineResponse {
   /** payload of user_doc 'categories' — requested from the server, defaults used until then */
   categories?: Category[] | null

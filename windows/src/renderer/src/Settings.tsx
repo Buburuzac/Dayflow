@@ -435,7 +435,9 @@ function SyncPrivacy({ settings, onSave }: { settings: SettingsWithSecrets; onSa
       </label>
       <small>
         Only cards confirmed for a project upload with their title and details. Everything else shows on your other
-        devices and the server as an "Out of scope" block, without what it was.
+        devices and the server as an "Out of scope" block, without what it was. Workspace admins see your timeline:
+        project work at the level you share, everything else as time only. Your Account page in the web dashboard
+        lists who opened it.
       </small>
       <label className="check">
         <input

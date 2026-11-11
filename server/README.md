@@ -103,6 +103,10 @@ nor `PUBLIC_URL` are refused for non-GET methods.
 | `GET /api/projects/:id/feed?from&to` | member | `ProjectFeedResponse` |
 | `GET /api/projects/:id/report?from&to` | member | `ProjectReport` (+ `byCategory`) |
 | `GET /api/projects/:id/standup?day=` | member | `ProjectStandupResponse` |
+| `GET /api/workspaces/:id/report?from&to` | admin | `WorkspaceReport`: every member (also without time) with total, active days, projects, hours sent to Odoo, last device sync; projects; person × project and person × day minutes. Same projection as project reports |
+| `GET /api/workspaces/:id/users?from&to` | admin | `WorkspaceUsersResponse`: every member with devices (revoked ones only with time in range), tracked minutes per device (synced cards minus private/deleted/error and work confirmed only for other workspaces), project minutes, active days. Owners shown to an admin are `restricted` (no own time) |
+| `GET /api/workspaces/:id/members/:userId/timeline?from&to` | admin | `MemberTimelineResponse`: the member's cards from all devices, lane per device. Private/deleted/error cards left out; content cut to the lowest share level among the card's confirmed projects in this workspace (`shareLevel`), other cards as time-only "Out of scope"; never `appSites`; no work confirmed only for other workspaces. 403 for an admin opening an owner. Views of someone else's timeline are logged |
+| `GET /api/me/timeline-views` | any | who opened the caller's timeline (latest 100) |
 | `GET /api/timesheets/proposals?from&to&workspaceId` | any (member) | `{ odooConfigured, employeeMapped, proposals: TimesheetProposal[] }` |
 | `POST /api/timesheets/submit` | any (member, not viewer) | `TimesheetSubmitRequest` → `TimesheetSubmitResult` |
 | `GET /api/timesheets/exports?from&to[&workspaceId]` | any | the caller's export history |

@@ -101,12 +101,12 @@ export function DayBars({ days, color }: { days: { day: string; minutes: number 
   )
 }
 
-/** Horizontal bars per member with their totals. */
-export function MemberBars({ rows, color }: { rows: { id: string; name: string; minutes: number }[]; color: string }) {
+/** Horizontal bars per member with their totals; with `total`, each member's share of it too. */
+export function MemberBars({ rows, color, total }: { rows: { id: string; name: string; minutes: number }[]; color: string; total?: number }) {
   const [ref, width] = useWidth<HTMLDivElement>()
   const rowH = 30
   const labelW = Math.min(150, Math.max(90, width * 0.3))
-  const valueW = 64
+  const valueW = total ? 104 : 64
   const max = Math.max(1, ...rows.map((r) => r.minutes))
   const w = Math.max(260, width)
   const barMax = w - labelW - valueW - 8
@@ -126,6 +126,7 @@ export function MemberBars({ rows, color }: { rows: { id: string; name: string; 
                 <rect x={labelW} y={y + 4} width={bw} height={14} rx={7} fill={color} />
                 <text x={w - 2} y={y + 15} fontSize={12} textAnchor="end" fill="#707070">
                   {fmtMinutes(r.minutes)}
+                  {total ? <tspan fill="#a5a5a5">{` · ${total > 0 ? Math.round((r.minutes / total) * 100) : 0}%`}</tspan> : null}
                 </text>
               </g>
             )

@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { api } from '../api/client.ts'
 import type { DeviceInfo, Project, TimelineCard } from '../api/types.ts'
 import { useApp } from '../app-context.ts'
 import { ShareBar } from '../components/charts.tsx'
 import { initialRange, RangePicker, type RangeValue } from '../components/RangePicker.tsx'
-import { Empty, ErrorBox, Loading, ProjectChip } from '../components/ui.tsx'
+import { Empty, ErrorBox, Loading, ProjectChip, SHARE_LABEL } from '../components/ui.tsx'
 import { categoryColor, type Category } from '../lib/categories.ts'
 import { axisHour, clock, dayLabel, daysInRange, minuteOfDay, shortDay, toMs } from '../lib/dates.ts'
 import { fmtMinutes } from '../lib/format.ts'
@@ -32,15 +32,66 @@ function useProjectLookup(projects: Project[], cards: TimelineCard[]) {
   }, [projects, cards])
 }
 
+export interface TimelineData {
+  cards: TimelineCard[]
+  devices: DeviceInfo[]
+  categories: Category[]
+}
+
 export function MyTime() {
-  const { me, projects } = useApp()
+  const { me } = useApp()
+  return (
+    <TimelineView
+      load={(from, to) => api.timeline(from, to)}
+      fallbackDevices={me.devices}
+      emptyText={(mode) => `No cards from any of your devices for this ${mode}. Cards appear here once a device has synced.`}
+    />
+  )
+}
+
+/**
+ * Day/week timeline with one lane per device. Used for the caller's own time and, for admins, for a
+ * member's time (cards already cut by the server to what that member shares).
+ */
+export function TimelineView({
+  load,
+  deps = [],
+  head,
+  fallbackDevices = [],
+  emptyText,
+  initialDevice,
+}: {
+  load: (from: string, to: string) => Promise<TimelineData>
+  deps?: unknown[]
+  /** shown above the range picker; may use the loaded data */
+  head?: ReactNode | ((data: TimelineData | undefined) => ReactNode)
+  fallbackDevices?: DeviceInfo[]
+  emptyText: (mode: string) => string
+  /** device lane to show first (e.g. opened from the Users list) */
+  initialDevice?: string
+}) {
+  const { projects } = useApp()
   const [range, setRange] = useState<RangeValue>(() => initialRange('day'))
   const [selected, setSelected] = useState<string | null>(null)
-  const tl = useAsync(() => api.timeline(range.range.from, range.range.to), [range.range.from, range.range.to])
-  const cards = useMemo(() => (tl.data?.cards ?? []).filter((c) => !c.isError), [tl.data])
+  const [deviceFilter, setDeviceFilter] = useState<string>(initialDevice ?? 'all')
+  const tl = useAsync(() => load(range.range.from, range.range.to), [range.range.from, range.range.to, ...deps])
+  const depsKey = JSON.stringify(deps)
+  const [lastDeps, setLastDeps] = useState(depsKey)
+  if (depsKey !== lastDeps) {
+    // another person: forget the selected card and device filter, keep the period
+    setLastDeps(depsKey)
+    setSelected(null)
+    setDeviceFilter('all')
+  }
+  const allCards = useMemo(() => (tl.data?.cards ?? []).filter((c) => !c.isError), [tl.data])
+  const allDevices: DeviceInfo[] = tl.data?.devices?.length ? tl.data.devices : fallbackDevices
+  // devices worth a filter button: live ones and any that have cards in this range
+  const filterDevices = allDevices.filter((d) => !d.revoked || allCards.some((c) => c.deviceId === d.id))
+  const filter = deviceFilter !== 'all' && filterDevices.some((d) => d.id === deviceFilter) ? deviceFilter : 'all'
+  const cards = useMemo(() => (filter === 'all' ? allCards : allCards.filter((c) => c.deviceId === filter)), [allCards, filter])
+  const devices = filter === 'all' ? allDevices : allDevices.filter((d) => d.id === filter)
   const project = useProjectLookup(projects, cards)
   const cats = tl.data?.categories ?? []
-  const devices: DeviceInfo[] = tl.data?.devices?.length ? tl.data.devices : me.devices
 
   const totals = useMemo(() => {
     const byCat = new Map<string, number>()
@@ -64,8 +115,28 @@ export function MyTime() {
 
   return (
     <div className="page timeline-page">
+      {typeof head === 'function' ? head(tl.data) : head}
       <div className="page-head">
         <RangePicker value={range} onChange={(v) => { setRange(v); setSelected(null) }} modes={['day', 'week']} />
+        {filterDevices.length > 1 && (
+          <div className="seg device-filter" role="tablist" aria-label="Device">
+            <button role="tab" aria-selected={filter === 'all'} className={filter === 'all' ? 'active' : ''} onClick={() => setDeviceFilter('all')}>
+              All devices
+            </button>
+            {filterDevices.map((d) => (
+              <button
+                key={d.id}
+                role="tab"
+                aria-selected={filter === d.id}
+                className={filter === d.id ? 'active' : ''}
+                onClick={() => { setDeviceFilter(d.id); setSelected(null) }}
+                title={d.revoked ? `${d.name} (revoked)` : d.name}
+              >
+                <DeviceIcon platform={d.platform} /> {d.name}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="totals">
@@ -103,14 +174,14 @@ export function MyTime() {
           ) : !tl.data ? (
             <Loading />
           ) : !cards.length ? (
-            <Empty title="Nothing recorded yet">No cards from any of your devices for this {range.mode}. Cards appear here once a device has synced.</Empty>
+            <Empty title="Nothing recorded yet">{emptyText(range.mode)}</Empty>
           ) : range.mode === 'day' ? (
             <DayLanes day={range.range.from} cards={cards} devices={devices} cats={cats} project={project} selected={selected} onSelect={setSelected} />
           ) : (
             <WeekLanes days={daysInRange(range.range.from, range.range.to)} cards={cards} devices={devices} cats={cats} selected={selected} onSelect={setSelected} />
           )}
         </div>
-        {sel && <CardDetail card={sel} cats={cats} devices={devices} project={project} onClose={() => setSelected(null)} />}
+        {sel && <CardDetail card={sel} cats={cats} devices={allDevices} project={project} onClose={() => setSelected(null)} />}
       </div>
     </div>
   )
@@ -281,6 +352,15 @@ function CardDetail({ card, cats, devices, project, onClose }: { card: TimelineC
           <DeviceIcon platform={device?.platform} /> {device?.name ?? 'Unknown device'}
           {md.private === true && <span className="badge">Private · never shared</span>}
         </div>
+        {card.shareLevel !== undefined && (
+          <div className="notice small share-note">
+            {card.shareLevel === null
+              ? 'Outside this workspace’s projects — only the time is shown.'
+              : card.shareLevel === 'time'
+                ? 'Shared as time only — title and summaries are hidden.'
+                : `Shared at “${SHARE_LABEL[card.shareLevel]}” level.`}
+          </div>
+        )}
         {card.projects.length > 0 && (
           <>
             <h3>Projects</h3>
