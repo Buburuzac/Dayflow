@@ -60,7 +60,7 @@ struct TeamProjectsPanel: View {
 
   private func draft(from p: ProjectView) -> ProjectDraft {
     ProjectDraft(
-      id: p.id, workspaceId: p.workspaceId, name: p.name, color: p.color, description: p.description,
+      id: p.id, workspaceId: p.workspaceId, name: p.name, color: p.color, icon: p.icon, description: p.description,
       rules: p.rules, defaultShare: p.defaultShare, odoo: p.odoo, archived: p.archived)
   }
 }
@@ -104,7 +104,11 @@ struct TeamProjectRow: View {
 
   private var titleRow: some View {
     HStack(alignment: .center, spacing: 10) {
-      SyncColorDot(hex: project.color, size: 12)
+      if project.icon.isEmpty {
+        SyncColorDot(hex: project.color, size: 12)
+      } else {
+        Text(project.icon).font(.system(size: 15))
+      }
       VStack(alignment: .leading, spacing: 2) {
         HStack(spacing: 8) {
           Text(project.name)

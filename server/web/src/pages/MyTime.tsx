@@ -6,10 +6,11 @@ import { ShareBar } from '../components/charts.tsx'
 import { initialRange, RangePicker, type RangeValue } from '../components/RangePicker.tsx'
 import { Empty, ErrorBox, Loading, ProjectChip, SHARE_LABEL } from '../components/ui.tsx'
 import { categoryColor, type Category } from '../lib/categories.ts'
-import { axisHour, clock, dayLabel, daysInRange, minuteOfDay, shortDay, toMs } from '../lib/dates.ts'
+import { axisHour, clock, dayLabel, daysInRange, logicalDay, minuteOfDay, shortDay, toMs } from '../lib/dates.ts'
 import { fmtMinutes } from '../lib/format.ts'
 import { useAsync } from '../lib/hooks.ts'
 import { groupByDevice, hourWindow, layoutLane } from '../lib/lanes.ts'
+import { detailLines } from '../../../../windows/src/shared/detailed.ts'
 
 const PX_PER_MIN = 1.6
 
@@ -22,11 +23,18 @@ interface Positioned {
 
 const cardMinutes = (c: TimelineCard) => Math.max(0, (toMs(c.endTs) - toMs(c.startTs)) / 60000)
 
+function EntryProjects({ card, rowKey, project }: { card: TimelineCard; rowKey: string; project: Lookup }) {
+  const map = card.metadata?.detailProjects as Record<string, { projectId: string; confirmed: boolean }[]> | undefined
+  const refs = map && Object.keys(map).length ? map[rowKey] ?? [] : card.projects
+  if (!refs.length) return null
+  return <div className="entry-projects">{refs.map((ref) => { const p = project(ref.projectId); return <ProjectChip key={ref.projectId} name={`${p.icon ? `${p.icon} ` : ''}${p.name}`} color={p.color} unconfirmed={!ref.confirmed} /> })}</div>
+}
+
 /** Workspace projects first, then the name/colour the timeline carries (projects from other workspaces). */
 function useProjectLookup(projects: Project[], cards: TimelineCard[]) {
   return useMemo(() => {
-    const m = new Map<string, { id: string; name: string; color: string }>()
-    for (const c of cards) for (const p of c.projects) m.set(p.projectId, { id: p.projectId, name: p.projectName, color: p.color || '#BFB6AE' })
+    const m = new Map<string, { id: string; name: string; color: string; icon?: string }>()
+    for (const c of cards) for (const p of c.projects) m.set(p.projectId, { id: p.projectId, name: p.projectName, color: p.color || '#BFB6AE', icon: p.icon })
     for (const p of projects) m.set(p.id, p)
     return (id: string) => m.get(id) ?? { id, name: 'Other project', color: '#BFB6AE' }
   }, [projects, cards])
@@ -36,6 +44,9 @@ export interface TimelineData {
   cards: TimelineCard[]
   devices: DeviceInfo[]
   categories: Category[]
+  /** per-device palettes when cards come from several people (combined timeline) */
+  deviceCategories?: Record<string, Category[]>
+  selectionDevices?: { userId: string; device: DeviceInfo }[]
 }
 
 export function MyTime() {
@@ -50,8 +61,8 @@ export function MyTime() {
 }
 
 /**
- * Day/week timeline with one lane per device. Used for the caller's own time and, for admins, for a
- * member's time (cards already cut by the server to what that member shares).
+ * Day/week timeline with one lane per device. Also used for member and combined views; the server
+ * applies workspace sharing rules before those cards reach this component.
  */
 export function TimelineView({
   load,
@@ -60,6 +71,9 @@ export function TimelineView({
   fallbackDevices = [],
   emptyText,
   initialDevice,
+  hideDeviceFilter = false,
+  totalLabel = 'Total',
+  excludeDevices = [],
 }: {
   load: (from: string, to: string) => Promise<TimelineData>
   deps?: unknown[]
@@ -69,6 +83,10 @@ export function TimelineView({
   emptyText: (mode: string) => string
   /** device lane to show first (e.g. opened from the Users list) */
   initialDevice?: string
+  hideDeviceFilter?: boolean
+  totalLabel?: string
+  /** cards from these devices are hidden without reloading */
+  excludeDevices?: string[]
 }) {
   const { projects } = useApp()
   const [range, setRange] = useState<RangeValue>(() => initialRange('day'))
@@ -83,7 +101,8 @@ export function TimelineView({
     setSelected(null)
     setDeviceFilter('all')
   }
-  const allCards = useMemo(() => (tl.data?.cards ?? []).filter((c) => !c.isError), [tl.data])
+  const excludeKey = excludeDevices.join(',')
+  const allCards = useMemo(() => (tl.data?.cards ?? []).filter((c) => !c.isError && !excludeDevices.includes(c.deviceId)), [tl.data, excludeKey])
   const allDevices: DeviceInfo[] = tl.data?.devices?.length ? tl.data.devices : fallbackDevices
   // devices worth a filter button: live ones and any that have cards in this range
   const filterDevices = allDevices.filter((d) => !d.revoked || allCards.some((c) => c.deviceId === d.id))
@@ -92,6 +111,8 @@ export function TimelineView({
   const devices = filter === 'all' ? allDevices : allDevices.filter((d) => d.id === filter)
   const project = useProjectLookup(projects, cards)
   const cats = tl.data?.categories ?? []
+  const deviceCats = tl.data?.deviceCategories
+  const cardColor = (c: TimelineCard) => categoryColor(c.category, deviceCats?.[c.deviceId] ?? cats)
 
   const totals = useMemo(() => {
     const byCat = new Map<string, number>()
@@ -118,7 +139,10 @@ export function TimelineView({
       {typeof head === 'function' ? head(tl.data) : head}
       <div className="page-head">
         <RangePicker value={range} onChange={(v) => { setRange(v); setSelected(null) }} modes={['day', 'week']} />
-        {filterDevices.length > 1 && (
+        <span className="muted small" title="All device lanes use this browser's time zone">
+          Time zone: {Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}
+        </span>
+        {!hideDeviceFilter && filterDevices.length > 1 && (
           <div className="seg device-filter" role="tablist" aria-label="Device">
             <button role="tab" aria-selected={filter === 'all'} className={filter === 'all' ? 'active' : ''} onClick={() => setDeviceFilter('all')}>
               All devices
@@ -140,7 +164,7 @@ export function TimelineView({
       </div>
 
       <div className="totals">
-        <span className="total-chip strong">Total {fmtMinutes(totals.total)}</span>
+        <span className="total-chip strong">{totalLabel} {fmtMinutes(totals.total)}</span>
         {totals.byCat.map(([name, m]) => (
           <span key={name} className="total-chip">
             <span className="swatch" style={{ background: categoryColor(name, cats) }} />
@@ -176,30 +200,30 @@ export function TimelineView({
           ) : !cards.length ? (
             <Empty title="Nothing recorded yet">{emptyText(range.mode)}</Empty>
           ) : range.mode === 'day' ? (
-            <DayLanes day={range.range.from} cards={cards} devices={devices} cats={cats} project={project} selected={selected} onSelect={setSelected} />
+            <DayLanes day={range.range.from} cards={cards} devices={devices} color={cardColor} project={project} selected={selected} onSelect={setSelected} />
           ) : (
-            <WeekLanes days={daysInRange(range.range.from, range.range.to)} cards={cards} devices={devices} cats={cats} selected={selected} onSelect={setSelected} />
+            <WeekLanes days={daysInRange(range.range.from, range.range.to)} cards={cards} devices={devices} color={cardColor} selected={selected} onSelect={setSelected} />
           )}
         </div>
-        {sel && <CardDetail card={sel} cats={cats} devices={allDevices} project={project} onClose={() => setSelected(null)} />}
+        {sel && <CardDetail card={sel} color={cardColor} devices={allDevices} project={project} onClose={() => setSelected(null)} />}
       </div>
     </div>
   )
 }
 
-type Lookup = (id: string) => { id: string; name: string; color: string }
+type Lookup = (id: string) => { id: string; name: string; color: string; icon?: string }
 
-function DayLanes({ day, cards, devices, cats, project, selected, onSelect }: { day: string; cards: TimelineCard[]; devices: DeviceInfo[]; cats: Category[]; project: Lookup; selected: string | null; onSelect: (id: string) => void }) {
+function DayLanes({ day, cards, devices, color, project, selected, onSelect }: { day: string; cards: TimelineCard[]; devices: DeviceInfo[]; color: (card: TimelineCard) => string; project: Lookup; selected: string | null; onSelect: (id: string) => void }) {
   const items: (Positioned & { deviceId: string })[] = cards.map((c) => ({ id: c.id, start: minuteOfDay(c.startTs, day), end: minuteOfDay(c.endTs, day), card: c, deviceId: c.deviceId }))
   const [a, b] = hourWindow(items)
   const lanes = groupByDevice(items, devices)
   const hours = Array.from({ length: b - a + 1 }, (_, i) => a + i)
   const height = (b - a) * 60 * PX_PER_MIN
   return (
-    <div className="lanes day">
+    <div className="lanes day" style={{ minWidth: Math.max(420, lanes.length * 180) }}>
       <div className="lane-heads" style={{ marginLeft: 56 }}>
         {lanes.map((l) => (
-          <div key={l.device.id} className="lane-head">
+          <div key={l.device.id} className="lane-head" title={l.device.name}>
             <DeviceIcon platform={devices.find((d) => d.id === l.device.id)?.platform} />
             {l.device.name}
             <span className="muted">{fmtMinutes(l.items.reduce((s, i) => s + (i.end - i.start), 0))}</span>
@@ -224,7 +248,7 @@ function DayLanes({ day, cards, devices, cats, project, selected, onSelect }: { 
                   <button
                     key={c.id}
                     className={`card ${compact ? 'compact' : ''} ${selected === c.id ? 'selected' : ''}`}
-                    style={{ top, height: h, left: `calc(${(col / cols) * 100}% + 3px)`, width: `calc(${100 / cols}% - 6px)`, ['--cat' as string]: categoryColor(c.category, cats) }}
+                    style={{ top, height: h, left: `calc(${(col / cols) * 100}% + 3px)`, width: `calc(${100 / cols}% - 6px)`, ['--cat' as string]: color(c) }}
                     onClick={() => onSelect(c.id)}
                   >
                     <span className="card-title">{c.title || 'Untitled'}</span>
@@ -233,15 +257,7 @@ function DayLanes({ day, cards, devices, cats, project, selected, onSelect }: { 
                         {clock(c.startTs)} – {clock(c.endTs)}
                       </span>
                     )}
-                    {!compact && c.projects.length > 0 && h > 64 && (
-                      <span className="card-projects">
-                        {c.projects.map((p) => {
-                          const pr = project(p.projectId)
-                          return <ProjectChip key={p.projectId} name={pr.name} color={pr.color} unconfirmed={!p.confirmed} />
-                        })}
-                      </span>
-                    )}
-                    {compact && c.projects.length > 0 && <span className="dot-row">{c.projects.map((p) => <i key={p.projectId} style={{ background: project(p.projectId).color, opacity: p.confirmed ? 1 : 0.4 }} />)}</span>}
+                    {c.projects.length > 0 && <span className="project-cluster" title="Open project time breakdown">{c.projects.slice(0, 4).map((p) => { const pr = project(p.projectId); return <span key={p.projectId} className={`project-mark ${p.confirmed ? '' : 'unconfirmed'}`} style={{ ['--proj' as string]: pr.color }} title={`${pr.name} · ${Math.round(p.share * 100)}%`}>{pr.icon ?? ''}</span> })}{c.projects.length > 4 && <b>+{c.projects.length - 4}</b>}</span>}
                   </button>
                 )
               })}
@@ -253,8 +269,11 @@ function DayLanes({ day, cards, devices, cats, project, selected, onSelect }: { 
   )
 }
 
-function WeekLanes({ days, cards, devices, cats, selected, onSelect }: { days: string[]; cards: TimelineCard[]; devices: DeviceInfo[]; cats: Category[]; selected: string | null; onSelect: (id: string) => void }) {
-  const all = cards.map((c) => ({ id: c.id, start: minuteOfDay(c.startTs, c.day), end: minuteOfDay(c.endTs, c.day), card: c, deviceId: c.deviceId }))
+function WeekLanes({ days, cards, devices, color, selected, onSelect }: { days: string[]; cards: TimelineCard[]; devices: DeviceInfo[]; color: (card: TimelineCard) => string; selected: string | null; onSelect: (id: string) => void }) {
+  const all = cards.map((c) => {
+    const day = logicalDay(new Date(toMs(c.startTs)))
+    return { id: c.id, day, start: minuteOfDay(c.startTs, day), end: minuteOfDay(c.endTs, day), card: c, deviceId: c.deviceId }
+  })
   const [a, b] = hourWindow(all, 10)
   const span = (b - a) * 60
   const pct = (m: number) => `${((Math.max(a * 60, Math.min(b * 60, m)) - a * 60) / span) * 100}%`
@@ -273,7 +292,7 @@ function WeekLanes({ days, cards, devices, cats, selected, onSelect }: { days: s
         </div>
       </div>
       {days.map((day) => {
-        const dayItems = all.filter((i) => i.card.day === day)
+        const dayItems = all.filter((i) => i.day === day)
         const total = dayItems.reduce((s, i) => s + (i.end - i.start), 0)
         return (
           <div key={day} className="week-day">
@@ -299,7 +318,7 @@ function WeekLanes({ days, cards, devices, cats, selected, onSelect }: { days: s
                           width: `calc(${pct(item.end)} - ${pct(item.start)})`,
                           top: `${(col / cols) * 100}%`,
                           height: `${100 / cols}%`,
-                          ['--cat' as string]: categoryColor(item.card.category, cats),
+                          ['--cat' as string]: color(item.card),
                         }}
                         onClick={() => onSelect(item.id)}
                         title={`${item.card.title} · ${clock(item.card.startTs)}–${clock(item.card.endTs)}`}
@@ -325,7 +344,7 @@ function WeekLanes({ days, cards, devices, cats, selected, onSelect }: { days: s
   )
 }
 
-function CardDetail({ card, cats, devices, project, onClose }: { card: TimelineCard; cats: Category[]; devices: DeviceInfo[]; project: Lookup; onClose: () => void }) {
+function CardDetail({ card, color, devices, project, onClose }: { card: TimelineCard; color: (card: TimelineCard) => string; devices: DeviceInfo[]; project: Lookup; onClose: () => void }) {
   const device = devices.find((d) => d.id === card.deviceId)
   const md = card.metadata ?? {}
   const distractions = Array.isArray(md.distractions) ? (md.distractions as { title?: string; summary?: string; startTime?: string; endTime?: string }[]) : []
@@ -335,12 +354,12 @@ function CardDetail({ card, cats, devices, project, onClose }: { card: TimelineC
       <div className="detail-inner">
         <div className="row between">
           <div className="detail-meta">
-            <span className="cat-pill" style={{ ['--cat' as string]: categoryColor(card.category, cats) }}>
+            <span className="cat-pill" style={{ ['--cat' as string]: color(card) }}>
               {card.category}
               {card.subcategory ? ` · ${card.subcategory}` : ''}
             </span>
             <span className="detail-time">
-              {dayLabel(card.day)}, {clock(card.startTs)} – {clock(card.endTs)} · {fmtMinutes(cardMinutes(card))}
+              {dayLabel(logicalDay(new Date(toMs(card.startTs))))}, {clock(card.startTs)} – {clock(card.endTs)} · {fmtMinutes(cardMinutes(card))}
             </span>
           </div>
           <button className="icon-btn small" onClick={onClose} aria-label="Close details">
@@ -388,7 +407,7 @@ function CardDetail({ card, cats, devices, project, onClose }: { card: TimelineC
         {card.detailedSummary && (
           <>
             <h3>Detailed summary</h3>
-            <pre className="detailed">{card.detailedSummary}</pre>
+            <div className="detailed-lines">{detailLines(card.detailedSummary).map((line, i) => <div key={i} className="detailed-line"><div>{line.start ? <><strong>{line.start}–{line.end}</strong>: {line.text}</> : line.text}</div><EntryProjects card={card} rowKey={`detail:${i}`} project={project} /></div>)}</div>
           </>
         )}
         {distractions.length > 0 && (
@@ -399,6 +418,7 @@ function CardDetail({ card, cats, devices, project, onClose }: { card: TimelineC
                 <li key={i}>
                   <b>{d.title}</b> {d.startTime && <span className="muted">{d.startTime}–{d.endTime}</span>}
                   {d.summary && <div className="muted">{d.summary}</div>}
+                  <EntryProjects card={card} rowKey={`distraction:${i}`} project={project} />
                 </li>
               ))}
             </ul>

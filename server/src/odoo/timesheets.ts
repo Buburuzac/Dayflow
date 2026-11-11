@@ -1,5 +1,6 @@
 import type { Ctx } from '../context'
 import { withTx } from '../db'
+import { cardMinutesSQL } from '../sync/card-time'
 import type { OdooMapping, TimesheetProposal, TimesheetSubmitRequest, TimesheetSubmitResult } from '../shared'
 import { OdooClient, type OdooCreds } from './client'
 
@@ -62,7 +63,8 @@ export async function buildProposals(
 ): Promise<TimesheetProposal[]> {
   const r = await ctx.db.query<ProposalRow>(
     `SELECT c.day, p.id AS project_id, p.name AS project_name, p.odoo, c.id AS card_id, c.title, c.private,
-            GREATEST(0, c.end_ts - c.start_ts) / 60000.0 * LEAST(1, GREATEST(0, cp.share))
+            ${cardMinutesSQL()}
+              * LEAST(1, GREATEST(0, cp.share))
               * CASE WHEN t.total > 1 THEN 1 / t.total ELSE 1 END AS minutes
        FROM card_projects cp
        JOIN cards c ON c.id = cp.card_id AND c.user_id = cp.user_id

@@ -305,6 +305,18 @@ h3.sub {
   gap: 4px;
   margin-top: 2px;
 }
+.project-cluster { position: absolute; top: 3px; right: 4px; display: flex; align-items: center; cursor: pointer; z-index: 2; }
+.project-mark { width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--proj, #999); color: white; font-size: 12px; flex: none; box-shadow: 0 0 0 2px white; }
+.project-cluster .project-mark + .project-mark { margin-left: -5px; }
+.project-mark.unconfirmed { opacity: .55; border: 1px dashed #555; }
+.project-more { margin-left: 3px; font-size: 10px; font-weight: 700; }
+.detail-project-breakdown .row { display: flex; gap: 8px; align-items: center; margin: 4px 0; }
+.detail-project-breakdown .row b { margin-left: auto; }
+.detailed-lines { white-space: pre-wrap; line-height: 1.5; }
+.detailed-line { margin: 4px 0; }
+.detail-project-picker { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin: 3px 0 8px; }
+.detail-project-picker select { width: auto; font-size: 11px; padding: 2px 6px; }
+.detail-project-action { border: 0; background: transparent; font: inherit; cursor: pointer; padding: 0 0 0 5px; }
 .proj-chip {
   display: inline-flex;
   align-items: center;

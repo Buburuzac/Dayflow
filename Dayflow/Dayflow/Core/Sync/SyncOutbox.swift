@@ -145,6 +145,9 @@ struct SyncOutboxBuilder: @unchecked Sendable {
       ]
       // Always a boolean: the server only takes a boolean, so un-marking a card must say `false`.
       metadata["private"] = .bool(meta["private"]?.boolValue == true)
+      if let detailProjects = meta["detailProjects"]?.objectValue {
+        metadata["detailProjects"] = .object(detailProjects)
+      }
       if isLocal {
         let apps = precomputed?[e.entityId] ?? windowApps(db, startTs, endTs)
         metadata["windowApps"] = .array(apps.map { .string($0) })
@@ -299,6 +302,7 @@ struct SyncOutboxBuilder: @unchecked Sendable {
         "workspaceId": .string(p.workspaceId),
         "name": .string(p.name),
         "color": .string(p.color),
+        "icon": .string(p.icon),
         "description": .string(p.description),
         "rules": SyncCoding.value(p.rules),
         "defaultShare": .string(p.defaultShare.rawValue),

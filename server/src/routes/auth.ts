@@ -4,7 +4,7 @@ import { authenticate, issueSession, SESSION_COOKIE, setSessionCookie, signIn } 
 import { exchangeCode, isLoopbackRedirect, verifyIdToken } from '../auth/google'
 import type { Ctx } from '../context'
 import { randomToken, sha256 } from '../crypto'
-import { badRequest, HttpError, notFound, parse, Uuid } from '../http'
+import { badRequest, forbidden, HttpError, notFound, parse, Uuid } from '../http'
 
 
 const DeviceZ = z.object({ name: z.string().trim().min(1).max(100), platform: z.string().max(50).default('') })
@@ -28,7 +28,27 @@ export const WEB_LINK_TTL_MS = 60_000
 
 export async function authRoutes(app: FastifyInstance, ctx: Ctx) {
   const AUTH_LIMIT = { rateLimit: { max: ctx.config.AUTH_RATE_LIMIT, timeWindow: '1 minute' } }
-  app.get('/api/auth/google/config', async () => ({ clientId: ctx.config.GOOGLE_CLIENT_ID, devAuth: ctx.config.DEV_AUTH }))
+  app.get('/api/auth/google/config', async () => ({ clientId: ctx.config.GOOGLE_CLIENT_ID, webClientId: ctx.config.GOOGLE_WEB_CLIENT_ID, devAuth: ctx.config.DEV_AUTH }))
+
+  app.post('/api/auth/google/web', { config: AUTH_LIMIT }, async (req, reply) => {
+    const { credential } = parse(z.object({ credential: z.string().min(100).max(10000) }), req.body)
+    if (req.headers.origin) {
+      const allowed = new URL(ctx.config.PUBLIC_URL).origin
+      const sameHost = `${req.protocol}://${req.headers.host}`
+      if (req.headers.origin !== allowed && req.headers.origin !== sameHost) throw forbidden('cross-origin request')
+    }
+    if (!ctx.config.GOOGLE_WEB_CLIENT_ID) throw new HttpError(503, 'google_web_not_configured', 'Web sign-in is not configured')
+    const id = await verifyIdToken(ctx, credential, ctx.config.GOOGLE_WEB_CLIENT_ID)
+    const signed = await signIn(ctx, {
+      email: id.email,
+      name: id.name,
+      avatarUrl: id.picture,
+      googleSub: id.sub,
+      device: { name: 'Web Dashboard', platform: 'web', reuse: true },
+    })
+    setSessionCookie(ctx, reply, await issueSession(ctx, { userId: signed.user.id, deviceId: signed.device.id }))
+    return { ok: true }
+  })
 
   app.post('/api/auth/google/exchange', { config: AUTH_LIMIT }, async (req) => {
     const body = parse(ExchangeZ, req.body)

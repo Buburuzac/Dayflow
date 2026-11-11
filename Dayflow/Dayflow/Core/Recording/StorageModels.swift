@@ -78,6 +78,9 @@ struct TimelineCard: Codable, Sendable, Identifiable {
   let otherVideoSummaryURLs: [String]?  // For merged cards, subsequent video URLs
   let appSites: AppSites?
   let isBackupGenerated: Bool?
+  /// Absolute Unix seconds, when loaded from storage. Used to align cards from other time zones.
+  let startTs: Int?
+  let endTs: Int?
 
   init(
     id: UUID = UUID(),
@@ -95,7 +98,9 @@ struct TimelineCard: Codable, Sendable, Identifiable {
     videoSummaryURL: String?,
     otherVideoSummaryURLs: [String]?,
     appSites: AppSites?,
-    isBackupGenerated: Bool? = nil
+    isBackupGenerated: Bool? = nil,
+    startTs: Int? = nil,
+    endTs: Int? = nil
   ) {
     self.id = id
     self.recordId = recordId
@@ -113,6 +118,8 @@ struct TimelineCard: Codable, Sendable, Identifiable {
     self.otherVideoSummaryURLs = otherVideoSummaryURLs
     self.appSites = appSites
     self.isBackupGenerated = isBackupGenerated
+    self.startTs = startTs
+    self.endTs = endTs
   }
 }
 

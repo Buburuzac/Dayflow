@@ -1,4 +1,5 @@
 import type { Queryable } from '../db'
+import { cardMinutesSQL } from './card-time'
 
 /**
  * Rebuilds `project_entries` — the only team-visible view of personal cards.
@@ -18,6 +19,34 @@ export interface ProjectionScope {
   userId?: string
   workspaceId?: string
 }
+
+// A manually edited detailed line is shown only in the projects explicitly confirmed for it.
+// Unedited cards keep the original full summary for compatibility with existing data.
+const detailedForProject = `CASE WHEN jsonb_typeof(c.metadata->'detailProjects') = 'object' AND c.metadata->'detailProjects' <> '{}'::jsonb THEN (
+  SELECT string_agg(line, E'\\n' ORDER BY n) FROM (
+    SELECT line, row_number() OVER (ORDER BY ord) - 1 AS n
+      FROM string_to_table(c.detailed_summary, E'\\n') WITH ORDINALITY AS lines(line, ord)
+     WHERE line ~ '\\S' -- same blank-line rule as JS trim() and Swift .whitespacesAndNewlines
+  ) detail_lines
+  WHERE EXISTS (
+    SELECT 1 FROM jsonb_array_elements(
+      CASE WHEN jsonb_typeof(c.metadata->'detailProjects'->('detail:' || n)) = 'array'
+           THEN c.metadata->'detailProjects'->('detail:' || n) ELSE '[]'::jsonb END
+    ) ref WHERE ref->>'projectId' = p.id::text AND ref->>'confirmed' = 'true'
+  )
+) ELSE c.detailed_summary END`
+
+const distractionsForProject = `CASE WHEN jsonb_typeof(c.metadata->'detailProjects') = 'object' AND c.metadata->'detailProjects' <> '{}'::jsonb THEN COALESCE((
+  SELECT jsonb_agg(item ORDER BY ord) FROM jsonb_array_elements(
+    CASE WHEN jsonb_typeof(c.metadata->'distractions') = 'array' THEN c.metadata->'distractions' ELSE '[]'::jsonb END
+  ) WITH ORDINALITY AS distractions(item, ord)
+  WHERE EXISTS (
+    SELECT 1 FROM jsonb_array_elements(
+      CASE WHEN jsonb_typeof(c.metadata->'detailProjects'->('distraction:' || (ord - 1))) = 'array'
+           THEN c.metadata->'detailProjects'->('distraction:' || (ord - 1)) ELSE '[]'::jsonb END
+    ) ref WHERE ref->>'projectId' = p.id::text AND ref->>'confirmed' = 'true'
+  )
+), '[]'::jsonb) ELSE COALESCE(c.metadata->'distractions', '[]'::jsonb) END`
 
 export async function recomputeProjection(tx: Queryable, scope: ProjectionScope): Promise<void> {
   const del: string[] = []
@@ -55,13 +84,14 @@ export async function recomputeProjection(tx: Queryable, scope: ProjectionScope)
     `INSERT INTO project_entries(card_id, project_id, user_id, day, start_ts, end_ts, minutes,
                                  title, summary, category, detailed, distractions, share_level, updated_at)
      SELECT c.id, p.id, c.user_id, c.day, c.start_ts, c.end_ts,
-            GREATEST(0, c.end_ts - c.start_ts) / 60000.0 * LEAST(1, GREATEST(0, cp.share))
+            ${cardMinutesSQL()}
+              * LEAST(1, GREATEST(0, cp.share))
               * CASE WHEN t.total > 1 THEN 1 / t.total ELSE 1 END,
             CASE WHEN l.lvl IN ('cards','detailed') THEN c.title END,
             CASE WHEN l.lvl IN ('cards','detailed') THEN c.summary END,
             CASE WHEN l.lvl IN ('cards','detailed') THEN c.category END,
-            CASE WHEN l.lvl = 'detailed' THEN c.detailed_summary END,
-            CASE WHEN l.lvl = 'detailed' THEN COALESCE(c.metadata->'distractions', '[]'::jsonb) END,
+            CASE WHEN l.lvl = 'detailed' THEN ${detailedForProject} END,
+            CASE WHEN l.lvl = 'detailed' THEN ${distractionsForProject} END,
             l.lvl, now()
        FROM card_projects cp
        JOIN cards c ON c.id = cp.card_id AND c.user_id = cp.user_id

@@ -62,12 +62,12 @@ export async function exchangeCode(
   return json.id_token
 }
 
-export async function verifyIdToken(ctx: Ctx, idToken: string): Promise<GoogleIdentity> {
+export async function verifyIdToken(ctx: Ctx, idToken: string, audience = ctx.config.GOOGLE_CLIENT_ID): Promise<GoogleIdentity> {
   let payload: JWTPayload
   try {
     ;({ payload } = await jwtVerify(idToken, jwks(ctx.config.GOOGLE_JWKS_URL), {
       issuer: ['https://accounts.google.com', 'accounts.google.com'],
-      audience: ctx.config.GOOGLE_CLIENT_ID,
+      audience,
       clockTolerance: 60,
       currentDate: new Date(ctx.now()),
     }))

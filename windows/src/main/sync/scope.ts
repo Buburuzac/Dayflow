@@ -47,12 +47,15 @@ export function cardScope(
 /** The upload form of a card for its scope. Times stay; everything that describes the work goes. */
 export function redactCard(data: CardData, scope: CardScope): CardData {
   if (scope === 'full') return data
+  // Idle time is a distinct state, even when no project is attached. Keep only its label.
+  const idle = data.category.trim().toLowerCase() === 'idle'
+  const label = idle ? 'Idle' : OUT_OF_SCOPE_LABEL
   return {
     ...data,
-    title: OUT_OF_SCOPE_LABEL,
+    title: label,
     summary: '',
     detailedSummary: '',
-    category: OUT_OF_SCOPE_LABEL,
+    category: label,
     subcategory: '',
     // The private flag stays accurate on the server (it decides the team projection).
     metadata: { distractions: [], appSites: null, private: data.metadata.private === true },

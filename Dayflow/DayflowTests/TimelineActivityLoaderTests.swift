@@ -3,6 +3,22 @@ import XCTest
 @testable import Dayflow
 
 final class TimelineActivityLoaderTests: XCTestCase {
+  func testBuildActivitiesAlignsRemoteTimeFromAbsoluteTimestamp() {
+    let start = ISO8601DateFormatter().date(from: "2026-11-07T20:00:00Z")!
+    let card = TimelineCard(
+      recordId: 7, batchId: nil, startTimestamp: "5:00 AM", endTimestamp: "6:00 AM",
+      category: "Work", subcategory: "", title: "Tokyo work", summary: "",
+      detailedSummary: "", day: "2026-11-08", distractions: nil,
+      videoSummaryURL: nil, otherVideoSummaryURLs: nil, appSites: nil,
+      startTs: Int(start.timeIntervalSince1970), endTs: Int(start.timeIntervalSince1970) + 3600)
+
+    let activities = TimelineActivityLoader.buildActivities(from: [card])
+
+    XCTAssertEqual(activities.count, 1)
+    XCTAssertEqual(activities[0].startTime, start)
+    XCTAssertEqual(activities[0].endTime, start.addingTimeInterval(3600))
+  }
+
   func testResolveDisplaySegmentsGroupsConsecutiveFailures() {
     let activities = [
       activity(

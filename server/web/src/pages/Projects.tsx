@@ -60,7 +60,7 @@ export function Projects() {
             return (
               <button key={p.id} className={`project-card ${p.archived ? 'archived' : ''}`} style={{ ['--pc' as string]: p.color }} onClick={() => navigate(`/projects/${p.id}/feed`)}>
                 <div className="pc-top">
-                  <span className="pc-name">{p.name}</span>
+                  <span className="pc-name">{p.icon ? `${p.icon} ` : ''}{p.name}</span>
                   {p.archived && <span className="badge">Archived</span>}
                 </div>
                 <div className="pc-desc">{p.description || <span className="muted">No description</span>}</div>

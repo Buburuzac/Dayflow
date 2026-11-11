@@ -102,6 +102,7 @@ export function buildChange(
       }
       // Always a boolean: the server ignores a missing value, so un-marking would never reach it.
       metadata.private = meta.private === true
+      if (meta.detailProjects && typeof meta.detailProjects === 'object') metadata.detailProjects = meta.detailProjects
       if (local) metadata.windowApps = windowApps(store, startTs, endTs)
       else if (Array.isArray(meta.windowApps)) metadata.windowApps = meta.windowApps
       let data: CardData = {
@@ -241,6 +242,7 @@ export function buildChange(
         workspaceId: p.workspaceId,
         name: p.name,
         color: p.color,
+        icon: p.icon ?? '',
         description: p.description,
         rules: p.rules,
         defaultShare: p.defaultShare,

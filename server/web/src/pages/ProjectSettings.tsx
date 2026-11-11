@@ -74,6 +74,9 @@ function ProjectForm({ project }: { project: Project }) {
             <span className="label">Colour</span>
             <ColorPicker value={f.color} onChange={(c) => set('color', c)} />
           </div>
+          <label>Icon (optional emoji)
+            <input maxLength={16} value={f.icon} onChange={(e) => set('icon', e.target.value)} placeholder="📁" />
+          </label>
           <label>
             Description <em>also given to the AI so it can suggest this project for cards</em>
             <textarea rows={3} value={f.description} onChange={(e) => set('description', e.target.value)} />
@@ -169,6 +172,7 @@ function ProjectForm({ project }: { project: Project }) {
 interface Form {
   name: string
   color: string
+  icon: string
   description: string
   defaultShare: ShareLevel
   rules: { apps: string[]; domains: string[]; titleKeywords: string[]; repos: string[] }
@@ -182,6 +186,7 @@ function toForm(p: Project): Form {
   return {
     name: p.name,
     color: p.color,
+    icon: p.icon ?? '',
     description: p.description ?? '',
     defaultShare: p.defaultShare,
     rules: { apps: p.rules.apps ?? [], domains: p.rules.domains ?? [], titleKeywords: p.rules.titleKeywords ?? [], repos: p.rules.repos ?? [] },
@@ -196,6 +201,7 @@ function fromForm(f: Form): ProjectInput {
   return {
     name: f.name.trim(),
     color: f.color,
+    icon: f.icon,
     description: f.description,
     defaultShare: f.defaultShare,
     rules: f.rules,

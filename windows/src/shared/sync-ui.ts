@@ -34,6 +34,7 @@ export interface ProjectView {
   workspaceId: string
   name: string
   color: string
+  icon?: string
   description: string
   rules: ProjectRules
   defaultShare: ShareLevel
@@ -48,6 +49,7 @@ export interface ProjectDraft {
   workspaceId: string
   name: string
   color: string
+  icon?: string
   description: string
   rules: ProjectRules
   defaultShare: ShareLevel

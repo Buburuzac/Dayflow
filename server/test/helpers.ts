@@ -197,7 +197,12 @@ export async function mockGoogle() {
     res.end()
   })
   const url = await listen(server)
-  return { url, state, close: () => new Promise<void>((r) => server.close(() => r())) }
+  return { url, state,
+    idToken: (claims: Record<string, unknown>, audience = GOOGLE_CLIENT_ID) => new SignJWT({ email_verified: true, ...claims })
+      .setProtectedHeader({ alg: 'RS256', kid: 'k1' })
+      .setIssuer(state.issuer).setAudience(audience).setSubject(String(claims.sub ?? 'google-sub-1'))
+      .setIssuedAt().setExpirationTime('1h').sign(privateKey),
+    close: () => new Promise<void>((r) => server.close(() => r())) }
 }
 
 // ---- mock Odoo 15 XML-RPC ----

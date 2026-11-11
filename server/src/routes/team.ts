@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { requireProjectRole, requireWorkspaceRole, roleAtLeast } from '../access'
 import { authenticate, deviceInfo } from '../auth/auth'
 import type { Ctx } from '../context'
-import { Day, DayRange, forbidden, IdParam, notFound, parse, Uuid } from '../http'
+import { cardMinutesSQL, cardStartSQL } from '../sync/card-time'
+import { badRequest, Day, DayRange, forbidden, IdParam, notFound, parse, Uuid } from '../http'
 import type {
   MemberTimelineResponse,
   ProjectEntry,
@@ -64,23 +65,48 @@ function bullets(list: unknown): string[] {
     .filter((s) => s.trim().length > 0)
 }
 
+/** Timeline dates are interpreted in the viewer's zone; project reports keep each author's day. */
+function timelineZone(query: unknown): string | null {
+  const { timezone } = parse(z.object({ timezone: z.string().min(1).max(100).optional() }), query)
+  if (!timezone) return null
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone })
+  } catch {
+    throw badRequest('invalid timeline timezone')
+  }
+  return timezone
+}
+
+/** `day` is source-local, so a cross-zone timeline must select by absolute card start time. */
+function timelineRangeSQL(timezone: string | null, zoneParam: number): string {
+  if (!timezone) return 'c.day BETWEEN $2 AND $3'
+  const instant = cardStartSQL()
+  // The day prefilter keeps the (user_id, day) index usable; zones differ by at most 26 h.
+  return `c.day BETWEEN to_char($2::date - 2, 'YYYY-MM-DD') AND to_char($3::date + 2, 'YYYY-MM-DD')
+      AND ${instant} >= (($2::date + interval '4 hours') AT TIME ZONE $${zoneParam})
+      AND ${instant} < (($3::date + interval '1 day 4 hours') AT TIME ZONE $${zoneParam})`
+}
+
 export async function teamRoutes(app: FastifyInstance, ctx: Ctx) {
   // The caller's own merged cards from all devices (device lanes).
   app.get('/api/me/timeline', async (req): Promise<TimelineResponse> => {
     const auth = await authenticate(ctx, req)
     const { from, to } = parse(DayRange(93), req.query)
+    const timezone = timelineZone(req.query)
+    const range = timelineRangeSQL(timezone, 4)
+    const args = timezone ? [auth.userId, from, to, timezone] : [auth.userId, from, to]
     const [devices, cards, links, cats] = await Promise.all([
       ctx.db.query(`SELECT id, name, platform, last_seen_at, revoked_at FROM devices WHERE user_id = $1 ORDER BY created_at`, [auth.userId]),
       ctx.db.query(
-        `SELECT * FROM cards WHERE user_id = $1 AND day BETWEEN $2 AND $3 AND NOT deleted ORDER BY start_ts`,
-        [auth.userId, from, to],
+        `SELECT * FROM cards c WHERE user_id = $1 AND ${range} AND NOT deleted ORDER BY start_ts`,
+        args,
       ),
       ctx.db.query(
-        `SELECT cp.card_id, cp.project_id, cp.share, cp.source, cp.confidence, cp.confirmed, p.name, p.color
+        `SELECT cp.card_id, cp.project_id, cp.share, cp.source, cp.confidence, cp.confirmed, p.name, p.color, p.icon
            FROM card_projects cp JOIN cards c ON c.id = cp.card_id AND c.user_id = cp.user_id
            JOIN projects p ON p.id = cp.project_id AND NOT p.deleted
-          WHERE cp.user_id = $1 AND NOT cp.deleted AND c.day BETWEEN $2 AND $3`,
-        [auth.userId, from, to],
+          WHERE cp.user_id = $1 AND NOT cp.deleted AND ${range}`,
+        args,
       ),
       ctx.db.query(`SELECT payload FROM user_docs WHERE id = $1 AND NOT deleted`, [`${auth.userId}:categories`]),
     ])
@@ -91,6 +117,7 @@ export async function teamRoutes(app: FastifyInstance, ctx: Ctx) {
         projectId: l.project_id,
         projectName: l.name,
         color: l.color,
+        icon: l.icon,
         share: l.share,
         source: l.source,
         confidence: l.confidence,
@@ -258,7 +285,9 @@ export async function teamRoutes(app: FastifyInstance, ctx: Ctx) {
         [id],
       ),
       ctx.db.query(
-        `SELECT c.user_id, c.device_id, SUM(GREATEST(0, c.end_ts - c.start_ts)) / 60000.0 AS m, array_agg(DISTINCT c.day) AS days
+        `SELECT c.user_id, c.device_id,
+                SUM(${cardMinutesSQL()}) AS m,
+                array_agg(DISTINCT c.day) AS days
            FROM cards c JOIN memberships m ON m.user_id = c.user_id AND m.workspace_id = $1
           WHERE c.day BETWEEN $2 AND $3 AND NOT c.deleted AND NOT c.is_error AND NOT c.private AND ${notOtherWorkspaceWork('c', '$1')}
           GROUP BY c.user_id, c.device_id`,
@@ -312,6 +341,9 @@ export async function teamRoutes(app: FastifyInstance, ctx: Ctx) {
     const auth = await authenticate(ctx, req)
     const { id, userId } = parse(z.object({ id: Uuid, userId: Uuid }), req.params)
     const { from, to } = parse(RangeQ, req.query)
+    const timezone = timelineZone(req.query)
+    const range = timelineRangeSQL(timezone, 5)
+    const args = timezone ? [userId, from, to, id, timezone] : [userId, from, to, id]
     const callerRole = await requireWorkspaceRole(ctx.db, id, auth.userId, 'admin')
     const who = await ctx.db.query(
       `SELECT u.id, COALESCE(NULLIF(u.name,''), u.email) AS name, u.email, u.avatar_url, m.role
@@ -325,19 +357,19 @@ export async function teamRoutes(app: FastifyInstance, ctx: Ctx) {
       ctx.db.query(`SELECT id, name, platform, last_seen_at, revoked_at FROM devices WHERE user_id = $1 ORDER BY created_at`, [userId]),
       ctx.db.query(
         `SELECT id, device_id, day, start_ts, end_ts, title, summary, detailed_summary, category, subcategory, metadata
-           FROM cards c WHERE user_id = $1 AND day BETWEEN $2 AND $3 AND NOT deleted AND NOT is_error AND NOT private
+           FROM cards c WHERE user_id = $1 AND ${range} AND NOT deleted AND NOT is_error AND NOT private
             AND ${notOtherWorkspaceWork('c', '$4')}
           ORDER BY start_ts`,
-        [userId, from, to, id],
+        args,
       ),
       ctx.db.query(
-        `SELECT cp.card_id, cp.project_id, cp.share, cp.source, cp.confidence, p.name, p.color,
+        `SELECT cp.card_id, cp.project_id, cp.share, cp.source, cp.confidence, p.name, p.color, p.icon,
                 COALESCE(pm.share_level, p.default_share) AS lvl
            FROM card_projects cp JOIN cards c ON c.id = cp.card_id AND c.user_id = cp.user_id
            JOIN projects p ON p.id = cp.project_id AND NOT p.deleted AND p.workspace_id = $4
            LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = cp.user_id AND NOT pm.deleted
-          WHERE cp.user_id = $1 AND cp.confirmed AND NOT cp.deleted AND c.day BETWEEN $2 AND $3`,
-        [userId, from, to, id],
+          WHERE cp.user_id = $1 AND cp.confirmed AND NOT cp.deleted AND ${range}`,
+        args,
       ),
       ctx.db.query(`SELECT payload FROM user_docs WHERE id = $1 AND NOT deleted`, [`${userId}:categories`]),
     ])
@@ -346,7 +378,7 @@ export async function teamRoutes(app: FastifyInstance, ctx: Ctx) {
     for (const l of links.rows) {
       const cur = byCard.get(l.card_id) ?? { level: 'detailed' as ShareLevel, projects: [] }
       if (RANK[l.lvl as ShareLevel] < RANK[cur.level]) cur.level = l.lvl
-      cur.projects.push({ projectId: l.project_id, projectName: l.name, color: l.color, share: l.share, source: l.source, confidence: l.confidence, confirmed: true })
+      cur.projects.push({ projectId: l.project_id, projectName: l.name, color: l.color, icon: l.icon, share: l.share, source: l.source, confidence: l.confidence, confirmed: true })
       byCard.set(l.card_id, cur)
     }
     const u = who.rows[0]
@@ -360,18 +392,28 @@ export async function teamRoutes(app: FastifyInstance, ctx: Ctx) {
         const link = byCard.get(c.id)
         const level = link?.level ?? null
         const shown = level === 'cards' || level === 'detailed'
+        const allowed = new Set(link?.projects.map((p) => p.projectId) ?? [])
+        const refs = c.metadata?.detailProjects
+        const hasRows = refs && typeof refs === 'object' && !Array.isArray(refs) && Object.keys(refs).length > 0
+        const selectedRefs = (key: string) => Array.isArray(refs?.[key]) ? refs[key].filter((v: any) => v && v.confirmed === true && allowed.has(v.projectId)) : []
+        const visibleLines = String(c.detailed_summary).split('\n').filter((line) => line.trim()).map((line, i) => ({ line, refs: selectedRefs(`detail:${i}`) })).filter((x) => !hasRows || x.refs.length)
+        const visibleDistractions = (Array.isArray(c.metadata?.distractions) ? c.metadata.distractions : []).map((item: unknown, i: number) => ({ item, refs: selectedRefs(`distraction:${i}`) })).filter((x: { refs: unknown[] }) => !hasRows || x.refs.length)
+        const detailProjects = hasRows ? Object.fromEntries([
+          ...visibleLines.map((x, i) => [`detail:${i}`, x.refs]),
+          ...visibleDistractions.map((x: { refs: unknown[] }, i: number) => [`distraction:${i}`, x.refs]),
+        ]) : undefined
         return {
           id: c.id,
           deviceId: c.device_id,
           day: c.day,
           startTs: c.start_ts,
           endTs: c.end_ts,
-          title: !link ? 'Out of scope' : shown ? c.title : link.projects.map((p) => p.projectName).join(', '),
+          title: !link ? (c.category === 'Idle' ? 'Idle' : 'Out of scope') : shown ? c.title : link.projects.map((p) => p.projectName).join(', '),
           summary: shown ? c.summary : '',
-          detailedSummary: level === 'detailed' ? c.detailed_summary : '',
-          category: !link ? 'Out of scope' : shown ? c.category : '',
+          detailedSummary: level === 'detailed' ? visibleLines.map((x) => x.line).join('\n') : '',
+          category: !link ? (c.category === 'Idle' ? 'Idle' : 'Out of scope') : shown ? c.category : '',
           subcategory: shown ? c.subcategory : '',
-          metadata: level === 'detailed' && Array.isArray(c.metadata?.distractions) ? { distractions: c.metadata.distractions } : {},
+          metadata: level === 'detailed' ? { distractions: visibleDistractions.map((x: { item: unknown }) => x.item), ...(detailProjects ? { detailProjects } : {}) } : {},
           isError: false,
           projects: link?.projects ?? [],
           shareLevel: level,

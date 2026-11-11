@@ -36,6 +36,16 @@ export function CardProjectChips({ card }: { card: TimelineCard }) {
   )
 }
 
+/** Always visible, including on short and narrow timeline tiles. */
+export function ProjectCluster({ card, onOpen }: { card: TimelineCard; onOpen: () => void }) {
+  const list = card.projects ?? []
+  if (!list.length) return null
+  return <span className="project-cluster" role="button" tabIndex={0} aria-label="Show project time" onClick={(e) => { e.stopPropagation(); onOpen() }} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}>
+    {list.slice(0, 4).map((p) => <span key={p.projectId} className={`project-mark ${p.icon ? 'has-icon' : ''} ${p.confirmed ? '' : 'unconfirmed'}`} style={{ ['--proj' as string]: p.color }} title={`${p.name} · ${Math.round(p.share * 100)}%${p.confirmed ? '' : ' · suggested'}`}>{p.icon || ''}</span>)}
+    {list.length > 4 && <span className="project-more">+{list.length - 4}</span>}
+  </span>
+}
+
 /** Card detail: project picker, confirm suggestions, private toggle. */
 export function CardSyncSection({ card }: { card: TimelineCard }) {
   const projects = useProjects()

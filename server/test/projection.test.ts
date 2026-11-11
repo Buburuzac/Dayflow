@@ -131,6 +131,54 @@ describe('project_entries projection', () => {
     assert.equal(e.minutes, 30)
   })
 
+  test('seconds-based cards count minutes and filter detailed lines and distractions per project', async () => {
+    await api(t, member, 'PUT', `/api/projects/${projectId}/members/${member.userId}`, { shareLevel: 'detailed' })
+    const id = uuid()
+    const start = H(18) / 1000
+    const metadata: { detailProjects: Record<string, { projectId: string; share: number; confirmed: boolean }[]>; distractions: { title: string }[] } = { detailProjects: {
+      'detail:0': [{ projectId, share: 1, confirmed: true }],
+      'detail:1': [],
+      'distraction:0': [{ projectId, share: 1, confirmed: true }],
+      'distraction:1': [],
+    }, distractions: [{ title: 'review' }, { title: 'unrelated' }] }
+    await pushAs(t, member, [
+      cardChange(member, id, { title: 'Mixed work', startTs: start, endTs: start + 1800, detailedSummary: '18:00 - 18:15: project work\n18:15 - 18:30: other work', metadata }),
+      { entity: 'card_project', id: `${id}:${projectId}`, hlc: member.hlc(), data: { cardId: id, projectId, share: 0.5, source: 'manual', confidence: 1, confirmed: true } },
+    ])
+    const e = (await feed(owner)).entries.find((x: any) => x.cardId === id)
+    assert.equal(e.minutes, 15)
+    assert.equal(e.detailed, '18:00 - 18:15: project work')
+    assert.deepEqual(e.distractions, [{ title: 'review' }])
+    const timeline = await api(t, owner, 'GET', `/api/workspaces/${wsId}/members/${member.userId}/timeline?from=2026-11-02&to=2026-11-02`)
+    const visible = timeline.body.cards.find((c: any) => c.id === id)
+    assert.equal(visible.detailedSummary, '18:00 - 18:15: project work')
+    assert.deepEqual(visible.metadata.distractions, [{ title: 'review' }])
+    const edited = member.hlc()
+    metadata.detailProjects['detail:1'] = [{ projectId, share: 1, confirmed: true }]
+    await pushAs(t, member, [
+      { entity: 'card', id, hlc: edited, fieldHlc: { detailProjects: edited }, data: { metadata } },
+      { entity: 'card_project', id: `${id}:${projectId}`, hlc: member.hlc(), data: { cardId: id, projectId, share: 1, source: 'manual', confidence: 1, confirmed: true } },
+    ])
+    const updated = (await feed(owner)).entries.find((x: any) => x.cardId === id)
+    assert.equal(updated.minutes, 30)
+    assert.match(updated.detailed, /other work/)
+    await api(t, member, 'PUT', `/api/projects/${projectId}/members/${member.userId}`, { shareLevel: null })
+  })
+
+  test('detailed line keys skip whitespace-only lines, including CRLF blanks', async () => {
+    await api(t, member, 'PUT', `/api/projects/${projectId}/members/${member.userId}`, { shareLevel: 'detailed' })
+    const id = uuid()
+    const start = H(19) / 1000
+    const metadata = { detailProjects: { 'detail:0': [], 'detail:1': [{ projectId, share: 1, confirmed: true }] } }
+    await pushAs(t, member, [
+      cardChange(member, id, { title: 'CRLF', startTs: start, endTs: start + 1800, detailedSummary: '19:00 - 19:15: other work\r\n\t\r\n19:15 - 19:30: project work', metadata }),
+      { entity: 'card_project', id: `${id}:${projectId}`, hlc: member.hlc(), data: { cardId: id, projectId, share: 0.5, source: 'manual', confidence: 1, confirmed: true } },
+    ])
+    const e = (await feed(owner)).entries.find((x: any) => x.cardId === id)
+    assert.equal(e.detailed, '19:15 - 19:30: project work')
+    await api(t, member, 'PUT', `/api/projects/${projectId}/members/${member.userId}`, { shareLevel: null })
+  })
+
   test('feed, report and standup are for workspace members only', async () => {
     assert.equal((await api(t, outsider, 'GET', `/api/projects/${projectId}/feed?from=2026-11-01&to=2026-11-03`)).status, 404)
     const rep = (await api(t, owner, 'GET', `/api/projects/${projectId}/report?from=2026-11-01&to=2026-11-03`)).body

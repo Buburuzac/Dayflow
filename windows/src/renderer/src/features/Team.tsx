@@ -189,7 +189,7 @@ function ProjectsPanel({ status, projects }: { status: SyncStatus; projects: Pro
         {projects.map((p) => (
           <section key={p.id} className={`panel project-row ${p.archived ? 'archived' : ''}`}>
             <div className="project-head">
-              <span className="swatch big" style={{ background: p.color }} />
+              <span className="swatch big" style={{ background: p.color }}>{p.icon}</span>
               <div className="project-title">
                 <b>{p.name}</b>
                 {p.archived && <span className="badge">archived</span>}
@@ -304,6 +304,7 @@ function ProjectEditor({
       <h2>{d.id ? `Edit ${draft.name}` : 'New project'}</h2>
       <div className="row">
         <input type="color" value={d.color} onChange={(e) => set('color', e.target.value)} />
+        <input style={{ width: 56 }} aria-label="Project icon" title="Optional emoji icon" placeholder="Icon" maxLength={16} value={d.icon ?? ''} onChange={(e) => set('icon', e.target.value)} />
         <input className="grow" placeholder="Project name" value={d.name} onChange={(e) => set('name', e.target.value)} />
       </div>
       {!d.id && workspaces.length > 1 && (

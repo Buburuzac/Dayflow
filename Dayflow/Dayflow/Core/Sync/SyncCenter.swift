@@ -263,9 +263,16 @@ final class SyncCenter: ObservableObject {
     return try await requireEngine().revokeDevice(id)
   }
 
-  /// Opens the web dashboard, signed in (one-time link valid 60 s).
+  /// Opens the web dashboard. A signed-in client uses a one-time link; otherwise the web login opens.
   func openDashboard() async throws {
-    let url = try await requireEngine().webLink()
+    let url: URL
+    if status.signedIn {
+      url = try await requireEngine().webLink()
+    } else {
+      guard let server = URL(string: status.serverUrl), ["http", "https"].contains(server.scheme ?? "")
+      else { throw SyncError("Set a sync server URL in Settings first.") }
+      url = server
+    }
     try await platform?.openURL(url)
   }
 
@@ -309,6 +316,12 @@ final class SyncCenter: ObservableObject {
   /// Manual project for a card (share 1, confirmed); nil clears the card's projects.
   func assignCard(recordId: Int64, projectId: String?) async throws {
     try await requireEngine().assignCard(recordId: recordId, projectId: projectId)
+  }
+
+  func editDetailProject(recordId: Int64, key: String, projectId: String,
+                         action: DetailProjectAction) async throws {
+    try await requireEngine().editDetailProject(recordId: recordId, key: key,
+                                                projectId: projectId, action: action)
   }
 
   /// Confirms a guessed ("?") project on a card.

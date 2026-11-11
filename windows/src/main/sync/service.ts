@@ -14,6 +14,7 @@ import type {
   TimesheetSubmitResult,
 } from '../../shared/sync-types.ts'
 import type { AuthConfigStatus, MeView, ProjectDraft, ProjectView, SyncStatus, TimesheetProposalsView } from '../../shared/sync-ui.ts'
+import { detailProjectShares, initialDetailProjects } from '../../shared/detail-projects.ts'
 import { RemoteApplier } from './apply.ts'
 import type { ApplyResult } from './apply.ts'
 import { loopbackAuthorize } from './auth.ts'
@@ -578,12 +579,56 @@ export class SyncService {
     if (card.isError) throw new Error('Error cards cannot be assigned to projects.')
     if (projectId && !this.repo.project(projectId)) throw new Error('Unknown project')
     this.repo.setManualProject(card.uuid, projectId)
+    if (card.detailProjects) this.store.editCard(cardId, { detailProjects: {} })
+    this.deps.onCardsChanged?.()
+  }
+
+  editDetailProject(cardId: number, key: string, projectId: string, action: 'add' | 'remove' | 'confirm'): void {
+    const stored = this.store.getCard(cardId)
+    if (!stored) throw new Error('Card not found')
+    const card = this.repo.attachProjects([stored])[0]
+    if (!card?.uuid || card.isError) throw new Error('Card not found')
+    const project = this.repo.project(projectId)
+    if (!project || (action === 'add' && project.archived)) throw new Error('Project is not available')
+    const rows = initialDetailProjects(card)
+    if (!(key in rows)) throw new Error('Unknown detail line')
+    const current = rows[key]
+    if (action === 'add' && !current.some((p) => p.projectId === projectId)) {
+      current.push({ projectId, share: 1, source: 'manual', confidence: 1, confirmed: true })
+      for (const p of current) p.share = 1 / current.length
+    }
+    if (action === 'remove') {
+      rows[key] = current.filter((p) => p.projectId !== projectId)
+      const remaining = rows[key]
+      const total = remaining.reduce((sum, p) => sum + Math.max(0, p.share), 0)
+      if (total > 0) for (const p of remaining) p.share /= total
+    }
+    if (action === 'confirm') {
+      const p = current.find((p) => p.projectId === projectId)
+      if (p) { p.confirmed = true; p.source = 'manual'; p.confidence = 1 }
+    }
+    this.store.editCard(cardId, { detailProjects: rows })
+    this.repo.setAssignments(card.uuid, detailProjectShares(card, rows))
+    this.store.scopeDirty = true
     this.deps.onCardsChanged?.()
   }
 
   confirmCard(cardId: number, projectId: string): void {
     const card = this.store.getCard(cardId)
     if (!card?.uuid) throw new Error('Card not found')
+    if (card.detailProjects && Object.keys(card.detailProjects).length) {
+      const rows = initialDetailProjects(this.repo.attachProjects([card])[0])
+      for (const refs of Object.values(rows)) for (const ref of refs) if (ref.projectId === projectId) {
+        ref.confirmed = true
+        ref.source = 'manual'
+        ref.confidence = 1
+      }
+      this.store.editCard(cardId, { detailProjects: rows })
+      this.repo.setAssignments(card.uuid, detailProjectShares(card, rows))
+      this.store.scopeDirty = true
+      this.deps.onCardsChanged?.()
+      return
+    }
     this.repo.confirmProject(card.uuid, projectId)
     this.deps.onCardsChanged?.()
   }
@@ -644,6 +689,7 @@ export function sanitizeProjectDraft(raw: ProjectDraft): ProjectDraft {
     workspaceId,
     name,
     color,
+    icon: SAFE_TEXT(raw.icon, 16),
     description: SAFE_TEXT(raw.description, 2000),
     rules: {
       apps: cleanList(r.apps),

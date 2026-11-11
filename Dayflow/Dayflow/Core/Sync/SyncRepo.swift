@@ -53,6 +53,7 @@ struct ProjectRow: Equatable, Sendable {
   var workspaceId: String
   var name: String
   var color: String
+  var icon: String = ""
   var description: String
   var rules: ProjectRules
   var defaultShare: ShareLevel
@@ -254,7 +255,7 @@ struct SyncRepo: Sendable {
   private static func mapProject(_ r: Row) -> ProjectRow {
     let share = ShareLevel(rawValue: r["default_share"] ?? "") ?? .time
     return ProjectRow(
-      id: r["id"], workspaceId: r["workspace_id"] ?? "", name: r["name"] ?? "", color: r["color"] ?? "",
+      id: r["id"], workspaceId: r["workspace_id"] ?? "", name: r["name"] ?? "", color: r["color"] ?? "", icon: r["icon"] ?? "",
       description: r["description"] ?? "", rules: decodeJSON(ProjectRules.self, r["rules"]) ?? ProjectRules(),
       defaultShare: share, odoo: decodeJSON(OdooMapping.self, r["odoo"]) ?? OdooMapping(),
       archived: (r["archived"] as Int? ?? 0) == 1, deleted: (r["deleted"] as Int? ?? 0) == 1, hlc: r["hlc"] ?? "")
@@ -274,15 +275,15 @@ struct SyncRepo: Sendable {
   func putProject(_ db: Database, _ p: ProjectRow) throws {
     try db.execute(
       sql: """
-        INSERT INTO projects (id, workspace_id, name, color, description, rules, default_share, odoo, archived, deleted, hlc, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO projects (id, workspace_id, name, color, icon, description, rules, default_share, odoo, archived, deleted, hlc, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET workspace_id = excluded.workspace_id, name = excluded.name, color = excluded.color,
-          description = excluded.description, rules = excluded.rules, default_share = excluded.default_share,
+          icon = excluded.icon, description = excluded.description, rules = excluded.rules, default_share = excluded.default_share,
           odoo = excluded.odoo, archived = excluded.archived, deleted = excluded.deleted, hlc = excluded.hlc,
           updated_at = excluded.updated_at
         """,
       arguments: [
-        p.id, p.workspaceId, p.name, p.color, p.description, encodeJSON(p.rules), p.defaultShare.rawValue,
+        p.id, p.workspaceId, p.name, p.color, p.icon, p.description, encodeJSON(p.rules), p.defaultShare.rawValue,
         encodeJSON(p.odoo), p.archived ? 1 : 0, p.deleted ? 1 : 0, p.hlc, syncNowMs(),
       ])
   }
@@ -291,7 +292,7 @@ struct SyncRepo: Sendable {
   @discardableResult
   func saveProject(_ db: Database, _ d: ProjectDraft) throws -> ProjectRow {
     let row = ProjectRow(
-      id: (d.id?.isEmpty == false ? d.id! : syncNewUUID()), workspaceId: d.workspaceId, name: d.name, color: d.color,
+      id: (d.id?.isEmpty == false ? d.id! : syncNewUUID()), workspaceId: d.workspaceId, name: d.name, color: d.color, icon: d.icon,
       description: d.description, rules: d.rules, defaultShare: d.defaultShare, odoo: d.odoo,
       archived: d.archived ?? false, deleted: false, hlc: local.tick())
     try putProject(db, row)
@@ -337,7 +338,7 @@ struct SyncRepo: Sendable {
   func projectViews(_ db: Database, userId: String?, includeArchived: Bool = true) throws -> [ProjectView] {
     try projects(db, includeArchived: includeArchived).map { p in
       ProjectView(
-        id: p.id, workspaceId: p.workspaceId, name: p.name, color: p.color, description: p.description,
+        id: p.id, workspaceId: p.workspaceId, name: p.name, color: p.color, icon: p.icon, description: p.description,
         rules: p.rules, defaultShare: p.defaultShare, odoo: p.odoo, archived: p.archived,
         myShare: try userId.flatMap { try memberShare(db, projectId: p.id, userId: $0) })
     }
@@ -430,7 +431,7 @@ struct SyncRepo: Sendable {
       let rows = try Row.fetchAll(
         db,
         sql: """
-          SELECT cp.*, p.name, p.color FROM card_projects cp JOIN projects p ON p.id = cp.project_id
+          SELECT cp.*, p.name, p.color, p.icon FROM card_projects cp JOIN projects p ON p.id = cp.project_id
           WHERE cp.deleted = 0 AND p.deleted = 0 AND cp.card_uuid IN (\(ph)) ORDER BY cp.share DESC
           """,
         arguments: StatementArguments(chunk))
@@ -438,7 +439,7 @@ struct SyncRepo: Sendable {
         let uuid: String = r["card_uuid"]
         out[uuid, default: []].append(
           CardProjectInfo(
-            projectId: r["project_id"], name: r["name"] ?? "", color: r["color"] ?? "", share: r["share"] ?? 1,
+            projectId: r["project_id"], name: r["name"] ?? "", color: r["color"] ?? "", icon: r["icon"] ?? "", share: r["share"] ?? 1,
             source: AssignmentSource(rawValue: r["source"] ?? "") ?? .manual, confidence: r["confidence"] ?? 1,
             confirmed: (r["confirmed"] as Int? ?? 0) == 1))
       }
@@ -461,7 +462,9 @@ struct SyncRepo: Sendable {
         let dev: String? = r["device_id"]
         base[id] = CardSyncInfo(
           recordId: id, uuid: r["uuid"], deviceId: dev, remote: dev != nil && dev != me,
-          isPrivate: parseJSONObject(r["metadata"])["private"]?.boolValue == true, projects: [])
+          isPrivate: parseJSONObject(r["metadata"])["private"]?.boolValue == true, projects: [],
+          detailProjects: (parseJSONObject(r["metadata"])["detailProjects"]?.objectValue ?? [:])
+            .mapValues { ($0.arrayValue ?? []).compactMap(DetailProjectRef.init) })
       }
     }
     let chips = try projectChips(db, cardUuids: base.values.compactMap { $0.uuid })

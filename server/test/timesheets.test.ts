@@ -115,6 +115,20 @@ describe('timesheets against a mock Odoo', () => {
     assert.equal(line.existingOdooLineId, null)
   })
 
+  test('proposals count Unix-second client cards in minutes', async () => {
+    const id = uuid()
+    const start = Math.floor(Date.UTC(2026, 10, 3, 8) / 1000)
+    const r = await pushAs(t, owner, [
+      cardChange(owner, id, { day: '2026-11-03', title: 'Seconds', startTs: start, endTs: start + 1800 }),
+      { entity: 'card_project', id: `${id}:${projectId}`, hlc: owner.hlc(),
+        data: { cardId: id, projectId, share: 1, source: 'manual', confidence: 1, confirmed: true } },
+    ])
+    assert.deepEqual(r.body.rejected, [])
+    const p = await api(t, owner, 'GET', `/api/timesheets/proposals?from=2026-11-03&to=2026-11-03&workspaceId=${wsId}`)
+    assert.equal(p.body.proposals[0].minutes, 30)
+    assert.equal(p.body.proposals[0].hours, 0.5)
+  })
+
   test('submit creates the line, resubmit updates it instead of duplicating', async () => {
     const lines = [{ day: '2026-11-02', projectId, hours: 1, description: 'Header; Footer', cardIds: [] }]
     const r1 = await api(t, owner, 'POST', '/api/timesheets/submit', { lines })

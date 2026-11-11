@@ -10,7 +10,8 @@ import { SyncRepo } from '../src/main/sync/repo.ts'
 import { buildBatch, commitAccepted, requeueObservations, rescopeCards } from '../src/main/sync/outbox.ts'
 import { RemoteApplier } from '../src/main/sync/apply.ts'
 import type { DocSources } from '../src/main/sync/docs.ts'
-import { DEFAULT_SYNC_POLICY, OUT_OF_SCOPE_LABEL, cardScope } from '../src/main/sync/scope.ts'
+import { DEFAULT_SYNC_POLICY, OUT_OF_SCOPE_LABEL, cardScope, redactCard } from '../src/main/sync/scope.ts'
+import { formatClock, logicalDay } from '../src/main/time.ts'
 
 const noDocs: DocSources = { read: () => null, write: () => {} }
 const t9 = Math.floor(new Date(2026, 10, 8, 9, 0).getTime() / 1000)
@@ -54,6 +55,29 @@ test('cardScope: personal and private cards are excluded, confirmed project work
   assert.equal(cardScope({ category: 'Work', private: false }, false, p), 'out_of_scope')
   assert.equal(cardScope({ category: 'Work', private: false }, false, { ...p, outOfScope: false }), 'full')
 })
+
+test('unassigned idle time stays visibly idle while other unassigned time is out of scope', () => {
+  const data = { userId: 'u', startTs: 0, endTs: 60, day: '2026-11-08', category: 'Idle', subcategory: '', title: 'Away', summary: 'secret', detailedSummary: 'secret', metadata: { distractions: [] }, isError: false }
+  const idle = redactCard(data, 'out_of_scope')
+  assert.equal(idle.category, 'Idle')
+  assert.equal(idle.title, 'Idle')
+  assert.equal(idle.summary, '')
+  assert.equal(redactCard({ ...data, category: 'Work' }, 'out_of_scope').title, OUT_OF_SCOPE_LABEL)
+})
+
+test('a remote card uses the viewing computer\'s day and clock', withStore((store) => {
+  const start = Math.floor(Date.UTC(2026, 10, 7, 20) / 1000)
+  const localDay = logicalDay(start)
+  const sourceDay = localDay === '2026-11-08' ? '2026-11-07' : '2026-11-08'
+  store.db.prepare(`INSERT INTO timeline_cards
+    (start, end, start_ts, end_ts, day, title, category, metadata, uuid, hlc, field_hlc, device_id)
+    VALUES (?, ?, ?, ?, ?, 'Tokyo work', 'Work', '{}', ?, '1-0-remote', '{}', 'remote-device')`)
+    .run('5:00 AM', '6:00 AM', start, start + 3600, sourceDay, 'remote-card')
+  const remote = store.cardsForDay(localDay)[0]
+  assert.equal(remote.day, localDay)
+  assert.equal(remote.startTime, formatClock(start))
+  assert.equal(remote.endTime, formatClock(start + 3600))
+}))
 
 test(
   'outbox: unassigned work uploads as a time-only "Out of scope" block; confirming a project uploads it in full with a newer clock',

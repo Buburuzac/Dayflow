@@ -446,7 +446,9 @@ extension StorageManager {
             videoSummaryURL: row["video_summary_url"],
             otherVideoSummaryURLs: nil,
             appSites: appSites,
-            isBackupGenerated: isBackupGenerated
+            isBackupGenerated: isBackupGenerated,
+            startTs: row["start_ts"],
+            endTs: row["end_ts"]
           )
         }
       }) ?? []
@@ -563,7 +565,9 @@ extension StorageManager {
           videoSummaryURL: row["video_summary_url"],
           otherVideoSummaryURLs: nil,
           appSites: appSites,
-          isBackupGenerated: isBackupGenerated
+          isBackupGenerated: isBackupGenerated,
+          startTs: row["start_ts"],
+          endTs: row["end_ts"]
         )
       }
     }
@@ -633,7 +637,9 @@ extension StorageManager {
           videoSummaryURL: row["video_summary_url"],
           otherVideoSummaryURLs: nil,
           appSites: appSites,
-          isBackupGenerated: isBackupGenerated
+          isBackupGenerated: isBackupGenerated,
+          startTs: row["start_ts"],
+          endTs: row["end_ts"]
         )
       }
     }

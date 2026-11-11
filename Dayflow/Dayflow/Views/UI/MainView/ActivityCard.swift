@@ -410,14 +410,19 @@ struct ActivityCard: View {
             )
             .foregroundColor(Color(red: 0.55, green: 0.55, blue: 0.55))
 
-          renderMarkdownText(formattedDetailedSummary(activity.detailedSummary))
-            .font(
-              Font.custom("Figtree", size: 12)
-            )
-            .foregroundColor(stylePreviewAfter && theme.isDark ? .white : .black)
-            .lineLimit(nil)
-            .fixedSize(horizontal: false, vertical: true)
-            .textSelection(.enabled)
+          ForEach(detailRecords(for: activity).filter { $0.key.hasPrefix("detail:") }) { record in
+            DetailProjectLine(recordId: activity.recordId, record: record)
+          }
+        }
+      }
+      if !isFailedCard(activity) && !(activity.distractions ?? []).isEmpty {
+        VStack(alignment: .leading, spacing: 3) {
+          Text("DISTRACTIONS")
+            .font(Font.custom("Figtree", size: 12).weight(.semibold))
+            .foregroundColor(Color(red: 0.55, green: 0.55, blue: 0.55))
+          ForEach(detailRecords(for: activity).filter { $0.key.hasPrefix("distraction:") }) { record in
+            DetailProjectLine(recordId: activity.recordId, record: record)
+          }
         }
       }
     }
@@ -446,27 +451,12 @@ struct ActivityCard: View {
     return Text(content)
   }
 
-  private func formattedDetailedSummary(_ content: String) -> String {
-    if content.contains("\n") || content.contains("\r") {
-      return content
+  private func detailRecords(for activity: TimelineActivity) -> [SyncDetailRecord] {
+    let distractions: [JSONValue] = (activity.distractions ?? []).map { d in
+      .object(["startTime": .string(d.startTime), "endTime": .string(d.endTime),
+               "title": .string(d.title), "summary": .string(d.summary)])
     }
-
-    let pattern = #"\b\d{1,2}:\d{2}\s?(?:AM|PM)\s*-\s*\d{1,2}:\d{2}\s?(?:AM|PM)\b"#
-    guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
-      return content
-    }
-
-    let range = NSRange(content.startIndex..., in: content)
-    let matches = regex.matches(in: content, range: range)
-    guard matches.count > 1 else {
-      return content
-    }
-
-    let mutable = NSMutableString(string: content)
-    for idx in stride(from: matches.count - 1, through: 1, by: -1) {
-      mutable.insert("\n", at: matches[idx].range.location)
-    }
-    return mutable as String
+    return syncDetailRecords(summary: activity.detailedSummary, distractions: distractions)
   }
 
   private func categoryBadge(for raw: String) -> (name: String, indicator: Color)? {

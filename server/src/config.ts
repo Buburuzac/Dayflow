@@ -22,6 +22,7 @@ const schema = z.object({
   HOST: z.string().default('0.0.0.0'),
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
   GOOGLE_CLIENT_ID: z.string().optional().default(''),
+  GOOGLE_WEB_CLIENT_ID: z.string().optional().default(''),
   GOOGLE_CLIENT_SECRET: z.string().optional().default(''),
   GOOGLE_TOKEN_URL: z.string().url().default('https://oauth2.googleapis.com/token'),
   GOOGLE_JWKS_URL: z.string().url().default('https://www.googleapis.com/oauth2/v3/certs'),

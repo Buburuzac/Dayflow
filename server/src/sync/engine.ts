@@ -180,7 +180,7 @@ function checkUserField(c: ApplyCtx, data: Record<string, unknown> | undefined) 
 // ---- cards: analysis fields owned by the generating device, user fields merged per field ----
 
 /** User-editable card fields; each carries its own clock in field_hlc. `private` lives in metadata.private. */
-export const CARD_USER_FIELDS = ['title', 'category', 'subcategory', 'deleted', 'private'] as const
+export const CARD_USER_FIELDS = ['title', 'category', 'subcategory', 'deleted', 'private', 'detailProjects'] as const
 type UserField = (typeof CARD_USER_FIELDS)[number]
 
 interface CardRow {
@@ -211,6 +211,10 @@ function userFieldValue(ch: SyncChange, f: UserField): unknown {
   if (f === 'private') {
     const m = d.metadata as Record<string, unknown> | undefined
     return m && typeof m.private === 'boolean' ? m.private : undefined
+  }
+  if (f === 'detailProjects') {
+    const m = d.metadata as Record<string, unknown> | undefined
+    return m?.detailProjects && typeof m.detailProjects === 'object' ? m.detailProjects : undefined
   }
   return typeof d[f] === 'string' ? d[f] : undefined
 }
@@ -280,6 +284,7 @@ async function applyCard(c: ApplyCtx, ch: SyncChange): Promise<void> {
 
   // 1. analysis fields: generating device only, record-level LWW
   const analysisNewer = isGenerator && ch.hlc > cur.analysis_hlc
+  let metadataWrite: Record<string, unknown> | null = null
   if (analysisNewer && data) {
     if (data.startTs !== undefined) set('start_ts', data.startTs)
     if (data.endTs !== undefined) set('end_ts', data.endTs)
@@ -290,7 +295,8 @@ async function applyCard(c: ApplyCtx, ch: SyncChange): Promise<void> {
     if (data.metadata !== undefined) {
       const meta = { ...data.metadata }
       delete meta.private
-      set('metadata', JSON.stringify(meta))
+      if (fieldHlc.detailProjects && cur.metadata?.detailProjects) meta.detailProjects = cur.metadata.detailProjects
+      metadataWrite = meta
     }
   }
   if (analysisNewer) {
@@ -306,6 +312,7 @@ async function applyCard(c: ApplyCtx, ch: SyncChange): Promise<void> {
     subcategory: cur.subcategory,
     deleted: cur.deleted,
     private: cur.private,
+    detailProjects: cur.metadata?.detailProjects,
   }
   for (const f of CARD_USER_FIELDS) {
     const v = userFieldValue(ch, f)
@@ -323,12 +330,15 @@ async function applyCard(c: ApplyCtx, ch: SyncChange): Promise<void> {
       clock = ch.hlc
     }
     if (clock === null) continue
-    if (v !== current[f]) set(f === 'private' ? 'private' : f, v)
+    if (f === 'detailProjects') metadataWrite = { ...(metadataWrite ?? cur.metadata), detailProjects: v }
+    else if (v !== current[f]) set(f === 'private' ? 'private' : f, v)
     if (clock) {
       fieldHlc[f] = clock
       appliedClocks.push(clock)
     }
   }
+
+  if (metadataWrite) set('metadata', JSON.stringify(metadataWrite))
 
   if (sets.length === 0 && appliedClocks.length === 0) return // stale or duplicate: accepted, nothing to do
   set('field_hlc', JSON.stringify(fieldHlc))
@@ -566,13 +576,14 @@ export async function writeProject(
   const seq = await nextSeq(tx)
   if (insert) {
     await tx.query(
-      `INSERT INTO projects(id, workspace_id, name, color, description, rules, default_share, odoo, archived, deleted, device_id, hlc, server_seq)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      `INSERT INTO projects(id, workspace_id, name, color, icon, description, rules, default_share, odoo, archived, deleted, device_id, hlc, server_seq)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [
         id,
         workspaceId,
         d!.name,
         d!.color,
+        d!.icon ?? '',
         d!.description,
         JSON.stringify(d!.rules),
         d!.defaultShare,
@@ -586,12 +597,13 @@ export async function writeProject(
     )
   } else if (d) {
     await tx.query(
-      `UPDATE projects SET name=$2, color=$3, description=$4, rules=$5, default_share=$6, odoo=$7, archived=$8, deleted=$9,
-              device_id=$10, hlc=$11, server_seq=$12, updated_at=now() WHERE id=$1`,
+      `UPDATE projects SET name=$2, color=$3, icon=COALESCE($4, icon), description=$5, rules=$6, default_share=$7, odoo=$8, archived=$9, deleted=$10,
+              device_id=$11, hlc=$12, server_seq=$13, updated_at=now() WHERE id=$1`,
       [
         id,
         d.name,
         d.color,
+        d.icon ?? null,
         d.description,
         JSON.stringify(d.rules),
         d.defaultShare,
@@ -792,6 +804,7 @@ const SOURCES: { sql: string; map: RowMapper }[] = [
         workspaceId: r.workspace_id,
         name: r.name,
         color: r.color,
+        icon: r.icon,
         description: r.description,
         rules: r.rules,
         defaultShare: r.default_share,

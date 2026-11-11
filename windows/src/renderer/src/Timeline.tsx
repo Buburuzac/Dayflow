@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppStatus, BatchInfo, ScreenshotInfo, SettingsWithSecrets, TimelineCard } from '../../shared/types.ts'
 import type { ProjectView } from '../../shared/sync-ui.ts'
-import { CardProjectChips, CardSyncSection } from './features/CardProjects.tsx'
+import { CardSyncSection, ProjectCluster } from './features/CardProjects.tsx'
+import { detailLines } from '../../shared/detailed.ts'
+import { initialDetailProjects, projectRecords } from '../../shared/detail-projects.ts'
 import { useProjects } from './features/Sync.tsx'
 import { DayGoalHeader } from './features/DayGoals.tsx'
 import { ipcErrorMessage } from './Settings.tsx'
@@ -169,12 +171,16 @@ export function TimelineView({
                 const height = Math.max(22, ((c.endTs - c.startTs) / 60) * PX_PER_MIN - 3)
                 const color = colors.get(c.category) ?? '#ccc'
                 return (
-                  <button
+                  <div
                     key={c.id}
                     className={`card ${c.isError ? 'error' : ''} ${selected === c.id ? 'selected' : ''} ${height < 60 ? 'compact' : ''} ${hasRemote ? (c.remote ? 'lane-remote' : 'lane-local') : ''}`}
                     style={{ top, height, ['--cat' as string]: color }}
                     onClick={() => setSelected(c.id)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSelected(c.id) }}
                   >
+                    <ProjectCluster card={c} onOpen={() => setSelected(c.id)} />
                     <span className="card-title">
                       {c.remote && (
                         <span className="remote-mark" title="From another of your devices">
@@ -191,10 +197,9 @@ export function TimelineView({
                     <span className="card-time">
                       {c.startTime} – {c.endTime}
                     </span>
-                    {height >= 44 && <CardProjectChips card={c} />}
                     {height > 120 && c.summary && <span className="card-summary">{c.summary}</span>}
                     {c.appSites?.primary && height > 30 && <Favicon domain={c.appSites.primary} />}
-                  </button>
+                  </div>
                 )
               })}
             </div>
@@ -319,6 +324,9 @@ function CardDetail({ card, color, categories }: { card: TimelineCard; color: st
       {!card.isError && !card.remote && <TimelapseButton cardId={card.id} />}
       {card.remote && <p className="muted small">From another of your devices — screenshots stay on that PC.</p>}
       {!card.isError && <CardSyncSection card={card} />}
+      {(card.projects ?? []).length > 0 && <section className="detail-project-breakdown"><h3>Project time</h3>
+        {(card.projects ?? []).map((p) => <div key={p.projectId} className="row"><span className="project-mark" style={{ ['--proj' as string]: p.color }}>{p.icon}</span><span>{p.name}{p.confirmed ? '' : ' ?'}</span><b>{Math.round(p.share * 100)}%</b></div>)}
+      </section>}
       {card.summary && <p className="summary">{card.summary}</p>}
       {card.distractions.length > 0 && (
         <section>
@@ -331,6 +339,7 @@ function CardDetail({ card, color, categories }: { card: TimelineCard; color: st
                 </span>{' '}
                 <b>{d.title}</b>
                 {d.summary && <div>{d.summary}</div>}
+                <DetailProjectPicker card={card} rowKey={`distraction:${i}`} />
               </li>
             ))}
           </ul>
@@ -339,7 +348,7 @@ function CardDetail({ card, color, categories }: { card: TimelineCard; color: st
       {card.detailedSummary && (
         <section>
           <h3>Detailed summary</h3>
-          <pre className="detailed">{card.detailedSummary}</pre>
+          <div className="detailed-lines">{detailLines(card.detailedSummary).map((line, i) => <div key={i} className="detailed-line"><div>{line.start ? <><strong>{line.start}–{line.end}</strong>: {line.text}</> : line.text}</div><DetailProjectPicker card={card} rowKey={`detail:${i}`} /></div>)}</div>
         </section>
       )}
       {(card.appSites?.primary || card.appSites?.secondary) && (
@@ -363,6 +372,20 @@ function CardDetail({ card, color, categories }: { card: TimelineCard; color: st
       </div>
     </div>
   )
+}
+
+function DetailProjectPicker({ card, rowKey }: { card: TimelineCard; rowKey: string }) {
+  const projects = useProjects()
+  if (!projectRecords(card).some((r) => r.key === rowKey)) return null
+  const refs = initialDetailProjects(card)[rowKey] ?? []
+  const act = (projectId: string, action: 'add' | 'remove' | 'confirm') => void window.dayflow.call('projects:editDetail', card.id, rowKey, projectId, action).catch((e: unknown) => alert(ipcErrorMessage(e)))
+  return <div className="detail-project-picker">
+    {refs.map((p) => { const project = projects.find((x) => x.id === p.projectId); return <span key={p.projectId} className={`proj-chip ${p.confirmed ? '' : 'unconfirmed'}`} style={{ ['--proj' as string]: project?.color ?? '#999' }}>
+      {project?.icon} {project?.name ?? 'Project'}{!p.confirmed && <button className="detail-project-action" title="Confirm project" onClick={() => act(p.projectId, 'confirm')}>?</button>}
+      <button className="detail-project-action" title="Remove project from this entry" onClick={() => act(p.projectId, 'remove')}>×</button>
+    </span> })}
+    {projects.some((p) => !p.archived && !refs.some((r) => r.projectId === p.id)) && <select aria-label="Add project to this entry" value="" onChange={(e) => act(e.target.value, 'add')}><option value="">＋ Project</option>{projects.filter((p) => !p.archived && !refs.some((r) => r.projectId === p.id)).map((p) => <option key={p.id} value={p.id}>{p.icon} {p.name}</option>)}</select>}
+  </div>
 }
 
 function EditableTitle({ card }: { card: TimelineCard }) {

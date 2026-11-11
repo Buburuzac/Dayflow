@@ -42,6 +42,10 @@ enum AssignmentSource: String, Codable, Sendable {
   case llm
 }
 
+enum DetailProjectAction: Sendable {
+  case add, remove, confirm
+}
+
 /// One record on the wire (`SyncChange` in sync-types.ts).
 struct SyncChange: Codable, Equatable, Sendable {
   var entity: SyncEntity
@@ -413,6 +417,7 @@ struct ProjectView: Equatable, Identifiable, Sendable {
   var workspaceId: String
   var name: String
   var color: String
+  var icon: String = ""
   var description: String
   var rules: ProjectRules
   var defaultShare: ShareLevel
@@ -428,6 +433,7 @@ struct ProjectDraft: Equatable, Sendable {
   var workspaceId: String
   var name: String
   var color: String
+  var icon: String
   var description: String
   var rules: ProjectRules
   var defaultShare: ShareLevel
@@ -435,7 +441,7 @@ struct ProjectDraft: Equatable, Sendable {
   var archived: Bool?
 
   init(
-    id: String? = nil, workspaceId: String, name: String, color: String, description: String = "",
+    id: String? = nil, workspaceId: String, name: String, color: String, icon: String = "", description: String = "",
     rules: ProjectRules = ProjectRules(), defaultShare: ShareLevel = .time, odoo: OdooMapping = OdooMapping(),
     archived: Bool? = nil
   ) {
@@ -443,6 +449,7 @@ struct ProjectDraft: Equatable, Sendable {
     self.workspaceId = workspaceId
     self.name = name
     self.color = color
+    self.icon = icon
     self.description = description
     self.rules = rules
     self.defaultShare = defaultShare
@@ -470,6 +477,7 @@ struct CardProjectInfo: Equatable, Sendable {
   var projectId: String
   var name: String
   var color: String
+  var icon: String = ""
   var share: Double
   var source: AssignmentSource
   var confidence: Double
@@ -489,4 +497,126 @@ struct CardSyncInfo: Equatable, Sendable {
   var isPrivate: Bool
   /// Project chips, largest share first. Unconfirmed ones need a "confirm project" chip.
   var projects: [CardProjectInfo]
+  var detailProjects: [String: [DetailProjectRef]] = [:]
+}
+
+struct DetailProjectRef: Equatable, Sendable {
+  var projectId: String
+  var share: Double
+  var source: AssignmentSource
+  var confidence: Double
+  var confirmed: Bool
+
+  init(projectId: String, share: Double = 1, source: AssignmentSource = .manual,
+       confidence: Double = 1, confirmed: Bool = true) {
+    self.projectId = projectId
+    self.share = share
+    self.source = source
+    self.confidence = confidence
+    self.confirmed = confirmed
+  }
+
+  init?(_ value: JSONValue) {
+    guard let object = value.objectValue, let id = object["projectId"]?.stringValue else { return nil }
+    self.init(projectId: id, share: clamp01(object["share"]?.numberValue ?? 1),
+              source: AssignmentSource(rawValue: object["source"]?.stringValue ?? "") ?? .manual,
+              confidence: clamp01(object["confidence"]?.numberValue ?? 1),
+              confirmed: object["confirmed"]?.boolValue == true)
+  }
+
+  var json: JSONValue {
+    .object(["projectId": .string(projectId), "share": .double(share),
+             "source": .string(source.rawValue), "confidence": .double(confidence),
+             "confirmed": .bool(confirmed)])
+  }
+}
+
+struct SyncDetailRecord: Identifiable, Sendable {
+  let key: String
+  var id: String { key }
+  let stamp: String
+  let text: String
+  let minutes: Double
+}
+
+private func syncClockMinutes(_ raw: String) -> Int? {
+  let pieces = raw.trimmingCharacters(in: .whitespaces).uppercased().split(separator: ":")
+  guard pieces.count == 2, let hour = Int(pieces[0]) else { return nil }
+  let second = String(pieces[1]).trimmingCharacters(in: .whitespaces)
+  guard let minute = Int(second.prefix(2)), (0...59).contains(minute) else { return nil }
+  let period = String(second.dropFirst(2)).trimmingCharacters(in: .whitespaces)
+  guard (period.isEmpty && (0...23).contains(hour)) ||
+        ((period == "AM" || period == "PM") && (1...12).contains(hour)) else { return nil }
+  return (period.isEmpty ? hour : hour % 12 + (period == "PM" ? 12 : 0)) * 60 + minute
+}
+
+private func syncInterval(_ start: String, _ end: String) -> (Int, Int)? {
+  guard let a = syncClockMinutes(start), let b = syncClockMinutes(end) else { return nil }
+  let finish = b <= a ? b + 1440 : b
+  return finish - a <= 720 ? (a, finish) : nil
+}
+
+private func syncCoveredMinutes(_ target: (Int, Int), _ covers: [(Int, Int)]) -> Int {
+  var parts: [(Int, Int)] = []
+  for cover in covers {
+    for shift in [-1440, 0, 1440] {
+      let a = max(target.0, cover.0 + shift), b = min(target.1, cover.1 + shift)
+      if b > a { parts.append((a, b)) }
+    }
+  }
+  parts.sort { $0.0 < $1.0 }
+  var total = 0, end = target.0
+  for part in parts {
+    total += max(0, part.1 - max(part.0, end))
+    end = max(end, part.1)
+  }
+  return total
+}
+
+/// The same stable line keys and minute weights used by the Windows client and server.
+func syncDetailRecords(summary: String, distractions: [JSONValue]) -> [SyncDetailRecord] {
+  let expression = try? NSRegularExpression(
+    pattern: #"^\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)\s*[-–—]\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)\s*:\s*(.*)$"#,
+    options: [.caseInsensitive])
+  let distractionRanges: [(Int, Int)?] = distractions.map {
+    let o = $0.objectValue ?? [:]
+    return syncInterval(o["startTime"]?.stringValue ?? "", o["endTime"]?.stringValue ?? "")
+  }
+  let covers = distractionRanges.compactMap { $0 }
+  var result: [SyncDetailRecord] = []
+  for raw in summary.components(separatedBy: "\n").filter({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+    let i = result.count
+    guard let match = expression?.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)) else {
+      result.append(SyncDetailRecord(key: "detail:\(i)", stamp: "", text: raw, minutes: 1))
+      continue
+    }
+    func group(_ number: Int) -> String {
+      guard let range = Range(match.range(at: number), in: raw) else { return "" }
+      return String(raw[range])
+    }
+    let start = group(1), end = group(2)
+    let interval = syncInterval(start, end)
+    let stamp: String
+    if let a = syncClockMinutes(start), let b = syncClockMinutes(end) {
+      stamp = String(format: "%02d:%02d–%02d:%02d", a / 60, a % 60, b / 60, b % 60)
+    } else { stamp = "" }
+    let minutes = interval.map { max(0, $0.1 - $0.0 - syncCoveredMinutes($0, covers)) } ?? 1
+    result.append(SyncDetailRecord(key: "detail:\(i)", stamp: stamp, text: group(3), minutes: Double(minutes)))
+  }
+  for (i, distraction) in distractions.enumerated() {
+    let o = distraction.objectValue ?? [:]
+    let start = o["startTime"]?.stringValue ?? "", end = o["endTime"]?.stringValue ?? ""
+    let interval = distractionRanges[i]
+    let prior = distractionRanges.prefix(i).compactMap { $0 }
+    let minutes = interval.map { max(0, $0.1 - $0.0 - syncCoveredMinutes($0, prior)) } ?? 1
+    let stamp: String
+    if let a = syncClockMinutes(start), let b = syncClockMinutes(end) {
+      stamp = String(format: "%02d:%02d–%02d:%02d", a / 60, a % 60, b / 60, b % 60)
+    } else { stamp = "" }
+    let title = o["title"]?.stringValue ?? ""
+    let summary = o["summary"]?.stringValue ?? ""
+    result.append(SyncDetailRecord(key: "distraction:\(i)", stamp: stamp,
+                                   text: summary.isEmpty ? title : "\(title) — \(summary)", minutes: Double(minutes)))
+  }
+  return result
 }

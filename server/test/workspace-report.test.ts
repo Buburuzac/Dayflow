@@ -145,6 +145,24 @@ describe('workspace report', () => {
 })
 
 describe('member timeline (admin view)', () => {
+  test('Tokyo and Madrid place the same card on the viewer\'s logical day', async () => {
+    const japan = await join('tokyo-timeline@example.com')
+    const start = Math.floor(H(7, 20) / 1000) // 05:00 Nov 8 in Tokyo; 21:00 Nov 7 in Madrid
+    const cardId = await work(japan, 8, 5, 6, [{ projectId: website }], {
+      day: '2026-11-08', startTs: start, endTs: start + 3_600,
+    })
+    const madrid = '?from=2026-11-07&to=2026-11-07&timezone=Europe%2FMadrid'
+    const tokyo = '?from=2026-11-08&to=2026-11-08&timezone=Asia%2FTokyo'
+    const ownMadrid = await api(t, japan, 'GET', `/api/me/timeline${madrid}`)
+    const ownTokyo = await api(t, japan, 'GET', `/api/me/timeline${tokyo}`)
+    assert.ok(ownMadrid.body.cards.some((c: any) => c.id === cardId))
+    assert.ok(ownTokyo.body.cards.some((c: any) => c.id === cardId))
+    assert.ok(!(await api(t, japan, 'GET', '/api/me/timeline?from=2026-11-08&to=2026-11-08&timezone=Europe%2FMadrid')).body.cards.some((c: any) => c.id === cardId))
+    const admin = await api(t, owner, 'GET', timelineUrl(japan.userId, '2026-11-07') + '&timezone=Europe%2FMadrid')
+    assert.ok(admin.body.cards.some((c: any) => c.id === cardId))
+    assert.equal((await api(t, japan, 'GET', '/api/me/timeline?from=2026-11-07&to=2026-11-07&timezone=NotAZone')).status, 400)
+  })
+
   test('shows every device lane and cuts content to what the member shares', async () => {
     const pc = await join('lanes@example.com', 'member', 'Lanes PC')
     const laptop = await devLogin(t, 'lanes@example.com', 'Lanes laptop')

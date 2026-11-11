@@ -97,6 +97,7 @@ export interface ProjectData {
   workspaceId: string
   name: string
   color: string
+  icon?: string
   description: string
   rules: ProjectRules
   defaultShare: ShareLevel
@@ -323,6 +324,7 @@ export interface TimelineCard {
     projectId: string
     projectName: string
     color: string
+    icon?: string
     share: number
     source: AssignmentSource
     confidence: number

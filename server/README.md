@@ -74,7 +74,8 @@ nor `PUBLIC_URL` are refused for non-GET methods.
 | Method & path | Auth | Notes |
 |---|---|---|
 | `GET /api/health` | none | `{ ok, version, time, devAuth, googleConfigured }` |
-| `GET /api/auth/google/config` | none | `{ clientId, devAuth }` |
+| `GET /api/auth/google/config` | none | `{ clientId, webClientId, devAuth }` |
+| `POST /api/auth/google/web` | none, rate-limited | Google Identity Services `{ credential }` → Dashboard session cookie |
 | `POST /api/auth/google/exchange` | none, rate-limited | `{ code, codeVerifier, redirectUri (loopback), device }` → `AuthResponse` |
 | `POST /api/auth/dev` | none, `DEV_AUTH=1` only (else 404) | `{ email, deviceName, platform?, deviceId? }` → `AuthResponse` |
 | `POST /api/auth/web-link` | device, rate-limited | `{ url, expiresAt }`, one-time code valid 60 s |
@@ -91,7 +92,7 @@ nor `PUBLIC_URL` are refused for non-GET methods.
 | `GET /api/workspaces/:id/invites`, `DELETE …/invites/:inviteId` | admin | |
 | `GET /api/invites/:token`, `POST /api/invites/:token/accept` | any; email must match | |
 | `GET /api/workspaces/:id/projects[?includeArchived=1]` | member (incl. viewer) | |
-| `POST /api/workspaces/:id/projects` | admin | `{ id?, name, color, description, rules, defaultShare, odoo, archived }` |
+| `POST /api/workspaces/:id/projects` | admin | `{ id?, name, color, icon?, description, rules, defaultShare, odoo, archived }` |
 | `PATCH/DELETE /api/workspaces/:id/projects/:projectId` (alias `/api/projects/:id`) | admin | delete = tombstone |
 | `GET /api/projects/:id` | member | |
 | `GET /api/projects/:id/members` | member | share levels |
@@ -136,6 +137,7 @@ creates a new one if it was deleted in Odoo). Nothing is written to Odoo except 
 | `PUBLIC_URL` | external base URL, used in web-link and invite URLs (`http://192.168.0.90:8790`) |
 | `JWT_SECRET` | ≥ 32 chars; signs session cookies and derives the Odoo-key encryption key. Changing it logs out web sessions and makes stored Odoo keys unreadable (re-enter them) |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | OAuth client of type **Desktop app** (below) |
+| `GOOGLE_WEB_CLIENT_ID` | OAuth client of type **Web application** for direct Dashboard sign-in; register the origin of `PUBLIC_URL` under Authorized JavaScript origins |
 | `ALLOWED_EMAIL_DOMAINS` | optional comma list of domains and/or exact addresses, e.g. `velesagro.pl,someone@gmail.com`; empty = any verified Google account may sign in (it sees nothing until invited). Addresses in `BOOTSTRAP_ADMIN_EMAILS` are always allowed |
 | `BOOTSTRAP_ADMIN_EMAILS` | comma list; these users become owners of the default workspace on sign-in |
 | `DEV_AUTH` | `1` enables `/api/auth/dev` (tests only). `deploy.sh` refuses to deploy with `DEV_AUTH=1` |
@@ -190,6 +192,7 @@ Local development: `npm ci`, `npm run typecheck`, `npm run build`; `npm test` ne
 4. On megaserv put them into `/srv/dayflow/.env`:
    `GOOGLE_CLIENT_ID=…apps.googleusercontent.com` and `GOOGLE_CLIENT_SECRET=…`
    (optionally `ALLOWED_EMAIL_DOMAINS=velesagro.pl`).
+   For direct browser sign-in, create a second OAuth client of type **Web application**, add the exact origin of `PUBLIC_URL` to its Authorized JavaScript origins, and set `GOOGLE_WEB_CLIENT_ID` to that client's ID. The Dashboard verifies this token on the server and uses an HttpOnly session cookie.
 5. Restart: `server/deploy.sh` (or `$DC up -d` on the host). `GET /api/health` then shows `"googleConfigured": true`.
 
 Desktop clients use a loopback redirect (`http://127.0.0.1:<port>/callback`) with PKCE; Desktop-app clients allow

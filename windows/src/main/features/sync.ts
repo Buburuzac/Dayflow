@@ -104,7 +104,7 @@ export function register(ctx: FeatureContext): void {
   ipcMain.handle('sync:me', () => svc.me())
   ipcMain.handle('sync:revokeDevice', (_e, id: unknown) => svc.revokeDevice(str(id, 100)))
   ipcMain.handle('sync:openDashboard', async () => {
-    const url = await svc.webLink()
+    const url = svc.status().signedIn ? await svc.webLink() : svc.status().serverUrl
     await shell.openExternal(url)
   })
   ipcMain.handle('sync:setCardPrivate', (_e, cardId: unknown, isPrivate: unknown) => {
@@ -164,6 +164,11 @@ export function register(ctx: FeatureContext): void {
   ipcMain.handle('projects:confirmCard', (_e, cardId: unknown, projectId: unknown) => {
     if (typeof cardId !== 'number') throw new Error('Invalid card')
     svc.confirmCard(cardId, str(projectId, 100))
+  })
+  ipcMain.handle('projects:editDetail', (_e, cardId: unknown, key: unknown, projectId: unknown, action: unknown) => {
+    if (typeof cardId !== 'number') throw new Error('Invalid card')
+    if (action !== 'add' && action !== 'remove' && action !== 'confirm') throw new Error('Invalid action')
+    svc.editDetailProject(cardId, str(key, 100), str(projectId, 100), action)
   })
 
   // Resume a previous session in the background.

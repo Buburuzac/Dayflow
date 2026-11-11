@@ -63,6 +63,9 @@ func cleanMetadata(_ m: JSONValue?) -> [String: JSONValue] {
   if let w = o["windowApps"]?.arrayValue {
     out["windowApps"] = .array(Array(w.filter { $0.stringValue != nil }.prefix(20)))
   }
+  if let projects = o["detailProjects"]?.objectValue {
+    out["detailProjects"] = .object(projects.filter { $0.key.hasPrefix("detail:") || $0.key.hasPrefix("distraction:") })
+  }
   return out
 }
 
@@ -250,6 +253,16 @@ struct RemoteApplier {
         }
         fh["private"] = .string(rp)
       }
+      let detailClock = remoteField("detailProjects")
+      if detailClock > localField("detailProjects") {
+        if let projects = cleanMetadata(d["metadata"])["detailProjects"] {
+          meta["detailProjects"] = projects
+        } else {
+          meta.removeValue(forKey: "detailProjects")
+        }
+        metaChanged = true
+        fh["detailProjects"] = .string(detailClock)
+      }
     }
     let rd = remoteField("deleted")
     if rd > localField("deleted") {
@@ -350,6 +363,7 @@ struct RemoteApplier {
         id: c.id, workspaceId: ws.isEmpty ? (cur?.workspaceId ?? "") : ws,
         name: name.isEmpty ? (cur?.name ?? "Project") : name,
         color: isHexColor6or8(color) ? color : (cur?.color ?? "#7BC47F"),
+        icon: d["icon"]?.stringValue ?? cur?.icon ?? "",
         description: str(d["description"], 2000),
         rules: c.data != nil
           ? ProjectRules(

@@ -94,12 +94,16 @@ export interface TimelineCard {
   private?: boolean
   /** Project assignments (filled by the cards:get channel). */
   projects?: CardProjectInfo[]
+  detailProjects?: Record<string, DetailProjectRef[]>
 }
+
+export interface DetailProjectRef { projectId: string; share: number; source: 'manual' | 'rule' | 'llm'; confidence: number; confirmed: boolean }
 
 export interface CardProjectInfo {
   projectId: string
   name: string
   color: string
+  icon?: string
   share: number
   source: 'manual' | 'rule' | 'llm'
   confidence: number

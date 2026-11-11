@@ -18,6 +18,7 @@ import GRDB
 enum CardUserField: String, CaseIterable, Sendable {
   case title, category, subcategory, deleted
   case isPrivate = "private"
+  case detailProjects
 }
 
 let CARD_USER_FIELDS: [String] = CardUserField.allCases.map { $0.rawValue }
@@ -265,6 +266,7 @@ final class SyncLocal: @unchecked Sendable {
           workspace_id TEXT NOT NULL,
           name TEXT NOT NULL,
           color TEXT NOT NULL DEFAULT '#7BC47F',
+          icon TEXT NOT NULL DEFAULT '',
           description TEXT NOT NULL DEFAULT '',
           rules TEXT NOT NULL DEFAULT '{}',
           default_share TEXT NOT NULL DEFAULT 'time',
@@ -303,6 +305,8 @@ final class SyncLocal: @unchecked Sendable {
           hlc TEXT NOT NULL
         );
         """)
+
+    try addMissing("projects", [("icon", "TEXT NOT NULL DEFAULT ''")])
 
     var state = try Row.fetchOne(db, sql: "SELECT device_id, enabled FROM sync_state WHERE id = 1")
     if state == nil {

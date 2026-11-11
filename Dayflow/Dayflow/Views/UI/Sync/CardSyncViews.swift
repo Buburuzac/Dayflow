@@ -11,6 +11,112 @@
 import Combine
 import SwiftUI
 
+/// Splits a one-line entry with several time ranges onto separate lines. Display only: the entry
+/// keeps one line key, so its project assignments match Windows and the server.
+private func detailDisplayText(_ text: String) -> String {
+  guard !text.contains("\n"),
+        let regex = try? NSRegularExpression(pattern: #"\b\d{1,2}:\d{2}\s?(?:AM|PM)\s*-\s*\d{1,2}:\d{2}\s?(?:AM|PM)\b"#)
+  else { return text }
+  let mutable = NSMutableString(string: text)
+  for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed()
+  where match.range.location > 0 {
+    mutable.insert("\n", at: match.range.location)
+  }
+  return mutable as String
+}
+
+private func detailMarkdownText(_ content: String) -> Text {
+  let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+  if let parsed = try? AttributedString(markdown: content, options: options) { return Text(parsed) }
+  return Text(content)
+}
+
+/// A Detailed Summary or Distractions row with its own project assignments.
+struct DetailProjectLine: View {
+  let recordId: Int64?
+  let record: SyncDetailRecord
+
+  @ObservedObject private var store = CardSyncInfoStore.shared
+  @ObservedObject private var sync = SyncCenter.shared
+  @Environment(\.dayflowTheme) private var theme
+  @State private var errorText: String?
+
+  private var refs: [DetailProjectRef] {
+    guard let info = store.info(for: recordId) else { return [] }
+    if let explicit = info.detailProjects[record.key] { return explicit }
+    return info.projects.map {
+      DetailProjectRef(projectId: $0.projectId, share: $0.share, source: $0.source,
+                       confidence: $0.confidence, confirmed: $0.confirmed)
+    }
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 3) {
+      HStack(alignment: .firstTextBaseline, spacing: 4) {
+        if !record.stamp.isEmpty {
+          Text(record.stamp)
+            .font(.custom("Figtree", size: 12).weight(.bold))
+        }
+        detailMarkdownText(detailDisplayText(record.text))
+          .font(.custom("Figtree", size: 12))
+          .fixedSize(horizontal: false, vertical: true)
+          .textSelection(.enabled)
+      }
+      .foregroundColor(theme.textPrimary)
+      if let id = recordId, !sync.projects.isEmpty {
+        HStack(spacing: 5) {
+          ForEach(refs, id: \.projectId) { ref in
+            if let project = sync.projects.first(where: { $0.id == ref.projectId }) {
+              HStack(spacing: 2) {
+                if project.icon.isEmpty { SyncColorDot(hex: project.color, size: 7) }
+                else { Text(project.icon).font(.system(size: 10)) }
+                Text(project.name).lineLimit(1)
+                if !ref.confirmed {
+                  Button("?") { edit(id, project.id, .confirm) }
+                    .buttonStyle(.plain)
+                    .help("Confirm project")
+                }
+                Button("×") { edit(id, project.id, .remove) }
+                  .buttonStyle(.plain)
+                  .help("Remove project from this entry")
+              }
+              .font(.custom("Figtree", size: 10))
+              .padding(.horizontal, 5)
+              .padding(.vertical, 2)
+              .background(Capsule().fill(syncProjectColor(project.color).opacity(0.16)))
+            }
+          }
+          Menu {
+            ForEach(sync.projects.filter { project in
+              !project.archived && !refs.contains(where: { $0.projectId == project.id })
+            }) { project in
+              Button(project.name) { edit(id, project.id, .add) }
+            }
+          } label: {
+            Label("Project", systemImage: "plus.circle")
+              .font(.custom("Figtree", size: 10))
+          }
+          .menuStyle(.borderlessButton)
+          .fixedSize()
+        }
+      }
+    }
+    .alert("Could not change project", isPresented: Binding(
+      get: { errorText != nil }, set: { if !$0 { errorText = nil } }
+    )) {
+      Button("OK", role: .cancel) { errorText = nil }
+    } message: { Text(errorText ?? "") }
+  }
+
+  private func edit(_ id: Int64, _ projectId: String, _ action: DetailProjectAction) {
+    Task { @MainActor in
+      do { try await sync.editDetailProject(recordId: id, key: record.key, projectId: projectId, action: action) }
+      catch { errorText = syncErrorMessage(error) }
+      store.refresh(recordIds: [id])
+    }
+  }
+}
+
 // MARK: - Project chip
 
 struct CardProjectChip: View {
@@ -163,11 +269,46 @@ struct CanvasCardSyncDecoration: ViewModifier {
 
   func body(content: Content) -> some View {
     content
+      .overlay(alignment: .topTrailing) {
+        CanvasProjectCluster(recordId: recordId)
+          .allowsHitTesting(false)
+      }
       .overlay(alignment: .bottomTrailing) {
         CanvasCardSyncOverlay(recordId: recordId, height: height)
       }
       .opacity(store.isFilteredOut(recordId: recordId) ? 0.25 : 1)
       .animation(.easeOut(duration: 0.15), value: store.projectFilter)
+  }
+}
+
+/// Compact project markers stay visible even on a short timeline tile. Clicking the tile opens
+/// the project breakdown in its detail panel.
+struct CanvasProjectCluster: View {
+  let recordId: Int64?
+  @ObservedObject private var store = CardSyncInfoStore.shared
+
+  var body: some View {
+    if let info = store.info(for: recordId), !info.projects.isEmpty {
+      HStack(spacing: -5) {
+        ForEach(Array(info.projects.prefix(4)), id: \.projectId) { project in
+          ZStack {
+            Circle().fill(syncProjectColor(project.color))
+            if !project.icon.isEmpty {
+              Text(project.icon).font(.system(size: 10))
+            }
+          }
+          .frame(width: 17, height: 17)
+          .overlay(Circle().stroke(.white, lineWidth: 1.5))
+          .opacity(project.confirmed ? 1 : 0.5)
+          .help("\(project.name) · \(Int((project.share * 100).rounded()))%")
+        }
+        if info.projects.count > 4 {
+          Text("+\(info.projects.count - 4)").font(.system(size: 9, weight: .bold))
+        }
+      }
+      .padding(.top, 3)
+      .padding(.trailing, 13)
+    }
   }
 }
 
@@ -273,6 +414,21 @@ struct CardSyncDetailSection: View {
         SyncFlowLayout(spacing: 4, lineSpacing: 4) {
           ForEach(assigned, id: \.projectId) { project in
             CardProjectChip(project: project, recordId: recordId, fontSize: 11)
+          }
+        }
+      }
+      if !assigned.isEmpty {
+        VStack(alignment: .leading, spacing: 3) {
+          ForEach(assigned, id: \.projectId) { project in
+            HStack(spacing: 5) {
+              if project.icon.isEmpty { SyncColorDot(hex: project.color, size: 8) }
+              else { Text(project.icon).font(.system(size: 12)) }
+              Text(project.name)
+              Spacer()
+              Text("\(Int((project.share * 100).rounded()))%")
+            }
+            .font(.custom("Figtree", size: 11))
+            .foregroundColor(theme.textSecondary)
           }
         }
       }

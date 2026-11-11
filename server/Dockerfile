@@ -6,6 +6,7 @@
 FROM node:24-slim AS web
 WORKDIR /src/server
 COPY windows/src/shared/sync-types.ts /src/windows/src/shared/sync-types.ts
+COPY windows/src/shared/detailed.ts /src/windows/src/shared/detailed.ts
 COPY server/ ./
 # The dashboard lives in server/web and is built only when server/web/package.json exists.
 # WEB_BUILD_STRICT=1 fails the image build when the dashboard build fails; default: ship without it.

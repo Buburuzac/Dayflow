@@ -45,6 +45,7 @@ export interface ProjectRow {
   workspaceId: string
   name: string
   color: string
+  icon?: string
   description: string
   rules: ProjectRules
   defaultShare: ShareLevel
@@ -287,6 +288,7 @@ export class SyncRepo {
       workspaceId: String(r.workspace_id),
       name: String(r.name),
       color: String(r.color),
+      icon: String(r.icon ?? ''),
       description: String(r.description ?? ''),
       rules: parseJson<ProjectRules>(r.rules, {}),
       defaultShare: (SHARE_LEVELS.includes(r.default_share as ShareLevel) ? r.default_share : 'time') as ShareLevel,
@@ -313,10 +315,10 @@ export class SyncRepo {
   putProject(p: ProjectRow): void {
     this.db
       .prepare(
-        `INSERT INTO projects (id, workspace_id, name, color, description, rules, default_share, odoo, archived, deleted, hlc, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO projects (id, workspace_id, name, color, icon, description, rules, default_share, odoo, archived, deleted, hlc, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET workspace_id = excluded.workspace_id, name = excluded.name, color = excluded.color,
-           description = excluded.description, rules = excluded.rules, default_share = excluded.default_share,
+           icon = excluded.icon, description = excluded.description, rules = excluded.rules, default_share = excluded.default_share,
            odoo = excluded.odoo, archived = excluded.archived, deleted = excluded.deleted, hlc = excluded.hlc,
            updated_at = excluded.updated_at`,
       )
@@ -325,6 +327,7 @@ export class SyncRepo {
         p.workspaceId,
         p.name,
         p.color,
+        p.icon ?? '',
         p.description,
         JSON.stringify(p.rules ?? {}),
         p.defaultShare,
@@ -343,6 +346,7 @@ export class SyncRepo {
       workspaceId: d.workspaceId,
       name: d.name,
       color: d.color,
+      icon: d.icon ?? '',
       description: d.description,
       rules: d.rules,
       defaultShare: d.defaultShare,
@@ -397,6 +401,7 @@ export class SyncRepo {
       workspaceId: p.workspaceId,
       name: p.name,
       color: p.color,
+      icon: p.icon ?? '',
       description: p.description,
       rules: p.rules,
       defaultShare: p.defaultShare,
@@ -500,7 +505,7 @@ export class SyncRepo {
     const ph = uuids.map(() => '?').join(',')
     const rows = this.db
       .prepare(
-        `SELECT cp.*, p.name, p.color FROM card_projects cp JOIN projects p ON p.id = cp.project_id
+        `SELECT cp.*, p.name, p.color, p.icon FROM card_projects cp JOIN projects p ON p.id = cp.project_id
          WHERE cp.deleted = 0 AND p.deleted = 0 AND cp.card_uuid IN (${ph}) ORDER BY cp.share DESC`,
       )
       .all(...uuids) as Record<string, unknown>[]
@@ -510,6 +515,7 @@ export class SyncRepo {
         projectId: String(r.project_id),
         name: String(r.name),
         color: String(r.color),
+        icon: String(r.icon ?? ''),
         share: Number(r.share),
         source: String(r.source) as AssignmentSource,
         confidence: Number(r.confidence),

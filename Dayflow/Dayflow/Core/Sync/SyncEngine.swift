@@ -763,6 +763,89 @@ actor SyncEngine {
       let uuid = try cardUuid(db, recordId: recordId)
       if let projectId, try repo.project(db, projectId) == nil { throw SyncError("Unknown project") }
       try repo.setManualProject(db, cardUuid: uuid, projectId: projectId)
+      if let metadata: String = try String.fetchOne(db,
+        sql: "SELECT metadata FROM timeline_cards WHERE id = ?", arguments: [recordId]) {
+        var object = parseJSONObject(metadata)
+        if object["detailProjects"] != nil {
+          object["detailProjects"] = .object([:])
+          try db.execute(sql: "UPDATE timeline_cards SET metadata = ? WHERE id = ?",
+                         arguments: [object.jsonString, recordId])
+          local.cardEdited(db, id: recordId, fields: [.detailProjects])
+        }
+      }
+    }
+    events.onCardsChanged?()
+  }
+
+  func editDetailProject(recordId: Int64, key: String, projectId: String,
+                         action: DetailProjectAction) throws {
+    try writeSync { db in
+      let uuid = try cardUuid(db, recordId: recordId)
+      guard let project = try repo.project(db, projectId),
+            action != .add || !project.archived else { throw SyncError("Project is not available") }
+      guard let row = try Row.fetchOne(db,
+        sql: "SELECT detailed_summary, metadata FROM timeline_cards WHERE id = ?", arguments: [recordId])
+      else { throw SyncError("Card not found") }
+      var metadata = parseJSONObject(row["metadata"])
+      let records = syncDetailRecords(summary: row["detailed_summary"] ?? "",
+                                      distractions: metadata["distractions"]?.arrayValue ?? [])
+      let defaults = try repo.cardProjects(db, cardUuid: uuid).filter { !$0.deleted }.map {
+        DetailProjectRef(projectId: $0.projectId, share: $0.share, source: $0.source,
+                         confidence: $0.confidence, confirmed: $0.confirmed)
+      }
+      let stored = metadata["detailProjects"]?.objectValue ?? [:]
+      var allocations: [String: [DetailProjectRef]] = [:]
+      for record in records {
+        allocations[record.key] = stored[record.key].map { ($0.arrayValue ?? []).compactMap(DetailProjectRef.init) } ?? defaults
+      }
+      guard var refs = allocations[key] else { throw SyncError("Unknown detail line") }
+      switch action {
+      case .add:
+        if !refs.contains(where: { $0.projectId == projectId }) {
+          refs.append(DetailProjectRef(projectId: projectId))
+          for i in refs.indices { refs[i].share = 1 / Double(refs.count) }
+        }
+      case .remove:
+        refs.removeAll { $0.projectId == projectId }
+        let total = refs.reduce(0.0) { $0 + max(0, $1.share) }
+        if total > 0 { for i in refs.indices { refs[i].share /= total } }
+      case .confirm:
+        if let i = refs.firstIndex(where: { $0.projectId == projectId }) {
+          refs[i].confirmed = true
+          refs[i].source = .manual
+          refs[i].confidence = 1
+        }
+      }
+      allocations[key] = refs
+      metadata["detailProjects"] = .object(allocations.mapValues { .array($0.map(\.json)) })
+      try db.execute(sql: "UPDATE timeline_cards SET metadata = ? WHERE id = ?",
+                     arguments: [metadata.jsonString, recordId])
+      local.cardEdited(db, id: recordId, fields: [.detailProjects])
+
+      let weight = records.reduce(0.0) { $0 + $1.minutes }
+      var sums: [String: (confirmed: Double, suggested: Double, ref: DetailProjectRef)] = [:]
+      if weight > 0 {
+        for record in records {
+          let entries = allocations[record.key] ?? []
+          let total = entries.reduce(0.0) { $0 + max(0, $1.share) }
+          let scale = total > 1 ? 1 / total : 1
+          for ref in entries {
+            let part = record.minutes / weight * max(0, ref.share) * scale
+            let previous = sums[ref.projectId]
+            sums[ref.projectId] = (
+              (previous?.confirmed ?? 0) + (ref.confirmed ? part : 0),
+              (previous?.suggested ?? 0) + (ref.confirmed ? 0 : part), ref)
+          }
+        }
+      }
+      let next = sums.compactMap { id, sum -> AssignmentInput? in
+        let share = round3(sum.confirmed > 0 ? sum.confirmed : sum.suggested)
+        guard share > 0 else { return nil }
+        return AssignmentInput(projectId: id, share: share,
+                               source: sum.confirmed > 0 ? .manual : sum.ref.source,
+                               confidence: sum.ref.confidence, confirmed: sum.confirmed > 0)
+      }
+      try repo.setAssignments(db, cardUuid: uuid, next)
     }
     events.onCardsChanged?()
   }
@@ -772,6 +855,24 @@ actor SyncEngine {
       guard let uuid = try String.fetchOne(db, sql: "SELECT uuid FROM timeline_cards WHERE id = ?", arguments: [recordId])
       else { throw SyncError("Card not found") }
       try repo.confirmProject(db, cardUuid: uuid, projectId: projectId)
+      if let metadata: String = try String.fetchOne(db,
+        sql: "SELECT metadata FROM timeline_cards WHERE id = ?", arguments: [recordId]) {
+        var object = parseJSONObject(metadata)
+        if let stored = object["detailProjects"]?.objectValue, !stored.isEmpty {
+          object["detailProjects"] = .object(stored.mapValues { value in
+            .array((value.arrayValue ?? []).map { item in
+              guard var ref = DetailProjectRef(item), ref.projectId == projectId else { return item }
+              ref.confirmed = true
+              ref.source = .manual
+              ref.confidence = 1
+              return ref.json
+            })
+          })
+          try db.execute(sql: "UPDATE timeline_cards SET metadata = ? WHERE id = ?",
+                         arguments: [object.jsonString, recordId])
+          local.cardEdited(db, id: recordId, fields: [.detailProjects])
+        }
+      }
     }
     events.onCardsChanged?()
   }
@@ -868,7 +969,7 @@ func sanitizeProjectDraft(_ raw: ProjectDraft) throws -> ProjectDraft {
   func positive(_ v: Int?) -> Int? { v.flatMap { $0 > 0 ? $0 : nil } }
   return ProjectDraft(
     id: raw.id.flatMap { isUuidLike($0) ? $0 : nil }, workspaceId: workspaceId, name: name,
-    color: isHex6(raw.color) ? raw.color : "#7BC47F", description: safeText(raw.description, 2000),
+    color: isHex6(raw.color) ? raw.color : "#7BC47F", icon: safeText(raw.icon, 16), description: safeText(raw.description, 2000),
     rules: ProjectRules(
       apps: cleanList(raw.rules.apps), domains: cleanList(raw.rules.domains),
       titleKeywords: cleanList(raw.rules.titleKeywords), repos: cleanList(raw.rules.repos)),

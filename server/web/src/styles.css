@@ -938,7 +938,7 @@ h3.sub {
   justify-content: flex-start;
   gap: 2px;
   text-align: left;
-  padding: 5px 8px 5px 13px;
+  padding: 5px 34px 5px 13px;
   border-radius: 10px;
   border: 1px solid rgba(0, 0, 0, 0.08);
   background: color-mix(in srgb, var(--cat) 16%, white);
@@ -1005,6 +1005,13 @@ h3.sub {
   height: 7px;
   border-radius: 50%;
 }
+.project-cluster { position: absolute; top: 3px; right: 4px; display: flex; align-items: center; z-index: 2; }
+.project-mark { width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--proj, #999); color: white; font-size: 12px; flex: none; box-shadow: 0 0 0 2px white; }
+.project-cluster .project-mark + .project-mark { margin-left: -5px; }
+.project-mark.unconfirmed { opacity: .55; border: 1px dashed #555; }
+.detailed-lines { white-space: pre-wrap; line-height: 1.5; }
+.detailed-line { margin: 4px 0; }
+.entry-projects { display: flex; gap: 4px; flex-wrap: wrap; margin: 3px 0 8px; }
 .device-icon {
   flex-shrink: 0;
   vertical-align: -2px;
@@ -1548,6 +1555,60 @@ h3.sub {
 }
 
 /* Member timeline (admin) */
+.combined-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 20px 0;
+}
+.combined-head h1 {
+  margin: 0;
+  font-size: 26px;
+}
+.combined-head p {
+  margin: 0;
+}
+.combined-selectors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.combined-selector {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--chart-border);
+  border-radius: 10px;
+  background: var(--chart-card);
+}
+.combined-selector > strong {
+  display: block;
+  margin-bottom: 8px;
+}
+.combined-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.combined-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--chart-border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.combined-option:has(input:checked) {
+  border-color: var(--accent);
+}
+.combined-option input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+@media (max-width: 760px) {
+  .combined-selectors { grid-template-columns: 1fr; }
+}
 .member-head {
   display: flex;
   flex-direction: column;

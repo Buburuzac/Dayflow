@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { redactUrl } from '../src/app'
+import { withTx } from '../src/db'
 import { api, devLogin, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, mockGoogle, setup, type TestEnv } from './helpers'
 
 let t: TestEnv
@@ -18,6 +21,7 @@ before(async () => {
   google = await mockGoogle()
   t = await setup({
     GOOGLE_CLIENT_ID,
+    GOOGLE_WEB_CLIENT_ID: 'web-client.apps.googleusercontent.com',
     GOOGLE_CLIENT_SECRET,
     GOOGLE_TOKEN_URL: `${google.url}/token`,
     GOOGLE_JWKS_URL: `${google.url}/jwks`,
@@ -34,7 +38,7 @@ after(async () => {
 describe('Google desktop sign-in', () => {
   test('config exposes the client id only', async () => {
     const r = await api(t, null, 'GET', '/api/auth/google/config')
-    assert.deepEqual(r.body, { clientId: GOOGLE_CLIENT_ID, devAuth: true })
+    assert.deepEqual(r.body, { clientId: GOOGLE_CLIENT_ID, webClientId: 'web-client.apps.googleusercontent.com', devAuth: true })
   })
 
   test('exchange: verifies the ID token, registers user and device; bootstrap admin owns the default workspace', async () => {
@@ -81,6 +85,52 @@ describe('Google desktop sign-in', () => {
     const me = await t.app.inject({ url: '/api/me', headers: { authorization: `Bearer ${ok.body.deviceToken}` } })
     assert.deepEqual(me.json().workspaces, [])
   })
+})
+
+test('browser Google sign-in verifies the web audience and creates a cookie session', async () => {
+  const audience = 'web-client.apps.googleusercontent.com'
+  const claims = { sub: 'g-browser', email: 'browser@velesagro.pl', name: 'Browser User' }
+  const wrong = await google.idToken(claims, GOOGLE_CLIENT_ID)
+  assert.equal((await api(t, null, 'POST', '/api/auth/google/web', { credential: wrong })).status, 401)
+  const credential = await google.idToken(claims, audience)
+  const signed = await api(t, null, 'POST', '/api/auth/google/web', { credential })
+  assert.equal(signed.status, 200, JSON.stringify(signed.body))
+  const cookie = String(signed.headers['set-cookie']).split(';')[0]
+  assert.match(String(signed.headers['set-cookie']), /HttpOnly/)
+  const me = await t.app.inject({ url: '/api/me', headers: { cookie } })
+  assert.equal(me.statusCode, 200)
+  assert.equal(me.json().user.email, claims.email)
+  assert.equal(me.json().via, 'session')
+  // signing in again reuses the browser device instead of adding one per sign-in
+  const again = await api(t, null, 'POST', '/api/auth/google/web', { credential })
+  assert.equal(again.status, 200)
+  const web = await t.db.query(`SELECT d.id FROM devices d JOIN users u ON u.id = d.user_id WHERE u.email = $1 AND d.platform = 'web'`, [claims.email])
+  assert.equal(web.rowCount, 1)
+  const first = await t.app.inject({ url: '/api/me', headers: { cookie } })
+  assert.equal(first.statusCode, 200, 'the earlier browser session stays valid')
+})
+
+test('migration 005 keeps one web device per user and moves references to it', async () => {
+  const pc = await devLogin(t, 'dupes@velesagro.pl', 'Mac')
+  const web = async (seenMinutesAgo: number, revoked = false) => (await t.db.query<{ id: string }>(
+    `INSERT INTO devices(user_id, name, platform, token_hash, last_seen_at, revoked_at)
+     VALUES ($1, 'Web Dashboard', 'web', gen_random_uuid()::text, now() - $2 * interval '1 minute', CASE WHEN $3 THEN now() END)
+     RETURNING id`, [pc.userId, seenMinutesAgo, revoked])).rows[0].id
+  const revokedNewest = await web(0, true)
+  const kept = await web(5)
+  const referenced = await web(10)
+  const plain = await web(20)
+  await t.db.query(
+    `INSERT INTO card_projects(id, card_id, project_id, user_id, device_id, hlc, server_seq)
+     VALUES ('dupe-ref', gen_random_uuid(), gen_random_uuid(), $1, $2, '0', 0)`, [pc.userId, referenced])
+  const sql = readFileSync(join(import.meta.dirname, '..', 'migrations', '005_dedupe_web_devices.sql'), 'utf8')
+  await withTx(t.db, (tx) => tx.query(sql))
+  const left = await t.db.query(`SELECT id, platform FROM devices WHERE user_id = $1 ORDER BY platform`, [pc.userId])
+  assert.deepEqual(left.rows.map((r) => r.id), [pc.deviceId, kept])
+  assert.ok(![revokedNewest, referenced, plain].some((id) => left.rows.some((r) => r.id === id)))
+  const ref = await t.db.query(`SELECT device_id FROM card_projects WHERE id = 'dupe-ref'`)
+  assert.equal(ref.rows[0].device_id, kept)
+  await t.db.query(`DELETE FROM card_projects WHERE id = 'dupe-ref'`)
 })
 
 describe('web link, session cookie and revocation', () => {

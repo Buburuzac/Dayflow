@@ -70,6 +70,10 @@ export function App() {
             <span>{t.label}</span>
           </button>
         ))}
+        <button className="nav" onClick={() => void window.dayflow.call('sync:openDashboard').catch((err: unknown) => alert(String(err)))} title="Open Dashboard in your browser">
+          <span className="nav-icon">↗</span>
+          <span>Dashboard</span>
+        </button>
         <div className="sidebar-spacer" />
         {status && <RecorderPill status={status} />}
       </nav>

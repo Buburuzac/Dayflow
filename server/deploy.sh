@@ -27,7 +27,7 @@ upload() {
   echo "==> uploading source to $HOST:$DIR/src"
   tar -C "$ROOT" \
     --exclude=node_modules --exclude=dist --exclude=.env --exclude=server/web/screenshots \
-    -czf - server windows/src/shared/sync-types.ts |
+    -czf - server windows/src/shared/sync-types.ts windows/src/shared/detailed.ts |
     "${SSH[@]}" "set -e
       sudo mkdir -p '$DIR' && sudo chown '$SSH_USER:$SSH_USER' '$DIR' && chmod 750 '$DIR'
       rm -rf '$DIR/src.new' && mkdir -p '$DIR/src.new' && tar -xzf - -C '$DIR/src.new'
@@ -57,6 +57,8 @@ if [ ! -f "$ENV" ]; then
     echo "# Google OAuth client of type 'Desktop app' (see README.md), then: server/deploy.sh"
     echo "GOOGLE_CLIENT_ID="
     echo "GOOGLE_CLIENT_SECRET="
+    echo "# Google OAuth client of type 'Web application'; authorize the PUBLIC_URL origin"
+    echo "GOOGLE_WEB_CLIENT_ID="
     echo "# optional, comma-separated, e.g. velesagro.pl"
     echo "ALLOWED_EMAIL_DOMAINS="
     echo "BOOTSTRAP_ADMIN_EMAILS=$BOOTSTRAP"

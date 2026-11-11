@@ -5,6 +5,7 @@ import { AppContext, isAdminRole, type AppState } from './app-context.ts'
 import { DayflowMark, ErrorBox, Loading } from './components/ui.tsx'
 import { navigate, useAsync, useRoute } from './lib/hooks.ts'
 import { Account } from './pages/Account.tsx'
+import { CombinedTimeline } from './pages/CombinedTimeline.tsx'
 import { InvitePage } from './pages/InvitePage.tsx'
 import { MyTime } from './pages/MyTime.tsx'
 import { ProjectPage } from './pages/ProjectPage.tsx'
@@ -25,7 +26,7 @@ export function App() {
   const me = useAsync(() => api.me(), [])
   useEffect(() => onUnauthorized(() => setSignedOut(true)), [])
 
-  if (signedOut || (me.error instanceof ApiError && me.error.status === 401)) return <NoSession invite={!!inviteToken} />
+  if (signedOut || (me.error instanceof ApiError && me.error.status === 401)) return <NoSession invite={!!inviteToken} onSignedIn={() => { setSignedOut(false); me.reload() }} />
   if (me.error)
     return (
       <div className="center-page">
@@ -51,7 +52,39 @@ export function App() {
   return <Shell me={me.data} reloadMe={me.reload} onSignedOut={() => setSignedOut(true)} />
 }
 
-export function NoSession({ invite }: { invite?: boolean }) {
+type GoogleAccounts = { accounts: { id: { initialize: (options: { client_id: string; callback: (result: { credential: string }) => void }) => void; renderButton: (element: HTMLElement, options: Record<string, unknown>) => void } } }
+
+export function NoSession({ invite, onSignedIn }: { invite?: boolean; onSignedIn?: () => void }) {
+  const [clientId, setClientId] = useState('')
+  const [error, setError] = useState('')
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    void api.webAuthConfig().then((c) => setClientId(c.webClientId || '')).catch((e: unknown) => setError(String(e)))
+  }, [])
+  useEffect(() => {
+    if (!clientId) return
+    const script = document.createElement('script')
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.async = true
+    script.onload = () => setReady(true)
+    script.onerror = () => setError('Could not load Google sign-in.')
+    document.head.appendChild(script)
+    return () => script.remove()
+  }, [clientId])
+  useEffect(() => {
+    if (!ready || !clientId) return
+    const target = document.getElementById('google-sign-in')
+    const google = (window as Window & { google?: GoogleAccounts }).google
+    if (!target || !google) return
+    target.replaceChildren()
+    google.accounts.id.initialize({
+      client_id: clientId,
+      callback: ({ credential }) => {
+        void api.webSignIn(credential).then(() => onSignedIn?.()).catch((e: unknown) => setError(String(e)))
+      },
+    })
+    google.accounts.id.renderButton(target, { theme: 'outline', size: 'large', text: 'signin_with' })
+  }, [ready, clientId, onSignedIn])
   return (
     <div className="center-page">
       <div className="onb-card nosession">
@@ -59,13 +92,12 @@ export function NoSession({ invite }: { invite?: boolean }) {
           <DayflowMark size={28} />
           <span className="logo">Dayflow</span>
         </div>
-        <h1>Open the dashboard from the Dayflow app</h1>
-        <p>
-          The web dashboard signs you in through the desktop app — there is no separate password. In Dayflow, go to{' '}
-          <b>Settings → Sync &amp; team → Open web dashboard</b>.
-        </p>
-        {invite && <p>You opened a workspace invite. Sign in from the app first, then open the invite link again.</p>}
-        <p className="muted small">Sign-in links work once and expire after a minute; a session lasts 12 hours.</p>
+        <h1>Sign in to Dashboard</h1>
+        <p>Use the same Google account you use in Dayflow.</p>
+        <div id="google-sign-in" />
+        {!clientId && !error && <p className="muted small">Web sign-in is not configured. You can open Dashboard from the desktop app.</p>}
+        {error && <p className="notice err">{error}</p>}
+        {invite && <p>Your workspace invite will open after sign-in.</p>}
       </div>
     </div>
   )
@@ -101,6 +133,7 @@ function Shell({ me, reloadMe, onSignedOut }: { me: MeResponse; reloadMe: () => 
   else if (section === 'team') page = <Team />
   else if (section === 'users' && id) page = <MemberTimeline userId={id} device={route.query.get('device')} />
   else if (section === 'users') page = <Users />
+  else if (section === 'combined') page = <CombinedTimeline key={workspace?.id} />
   else if (section === 'timesheets') page = <Timesheets />
   else if (section === 'workspace') page = <WorkspaceSettings />
   else if (section === 'account') page = <Account onSignedOut={onSignedOut} onChanged={reloadMe} />
@@ -111,6 +144,7 @@ function Shell({ me, reloadMe, onSignedOut }: { me: MeResponse; reloadMe: () => 
     { id: 'projects', label: 'Projects', icon: <IconFolder /> },
     { id: 'team', label: 'Team', icon: <IconTeam />, show: state.isAdmin },
     { id: 'users', label: 'Users', icon: <IconUsers />, show: state.isAdmin },
+    { id: 'combined', label: 'Combined timeline', icon: <IconClock />, show: state.isAdmin },
     { id: 'timesheets', label: 'Timesheets', icon: <IconSheet /> },
     { id: 'workspace', label: 'Workspace', icon: <IconGear />, show: state.isAdmin },
     { id: 'account', label: 'Account', icon: <IconUser /> },

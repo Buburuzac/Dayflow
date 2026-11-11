@@ -4,7 +4,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
-import type { BatchInfo, ScreenshotInfo, TimelineCard } from '../shared/types.ts'
+import type { BatchInfo, DetailProjectRef, ScreenshotInfo, TimelineCard } from '../shared/types.ts'
 import { Hlc, formatHlc, parseHlc } from '../shared/sync-types.ts'
 import type { SyncEntity } from '../shared/sync-types.ts'
 import { DEFAULT_SYNC_SERVER_URL } from '../shared/sync-ui.ts'
@@ -24,7 +24,7 @@ export interface InsertedCard {
 }
 
 /** User-editable card fields that merge per field across devices (sync-server-design.md). */
-export const CARD_USER_FIELDS = ['title', 'category', 'subcategory', 'deleted', 'private'] as const
+export const CARD_USER_FIELDS = ['title', 'category', 'subcategory', 'deleted', 'private', 'detailProjects'] as const
 export type CardUserField = (typeof CARD_USER_FIELDS)[number]
 
 export function parseJsonObject(v: unknown): Record<string, unknown> {
@@ -51,6 +51,7 @@ interface CardMetadata {
   appSites?: ActivityCardData['appSites']
   isError?: boolean
   private?: boolean
+  detailProjects?: Record<string, DetailProjectRef[]>
 }
 
 export const ERROR_CATEGORY = 'System'
@@ -225,6 +226,7 @@ export class Store {
         workspace_id TEXT NOT NULL,
         name TEXT NOT NULL,
         color TEXT NOT NULL DEFAULT '#7BC47F',
+        icon TEXT NOT NULL DEFAULT '',
         description TEXT NOT NULL DEFAULT '',
         rules TEXT NOT NULL DEFAULT '{}',
         default_share TEXT NOT NULL DEFAULT 'time',
@@ -274,6 +276,8 @@ export class Store {
         created_at INTEGER NOT NULL
       );
     `)
+
+    addMissing('projects', [['icon', "TEXT NOT NULL DEFAULT ''"]])
 
     let state = this.db.prepare('SELECT device_id, enabled FROM sync_state WHERE id = 1').get() as
       | { device_id: string; enabled: number }
@@ -661,14 +665,17 @@ export class Store {
       /* ignore */
     }
     const deviceId = r.device_id == null ? null : String(r.device_id)
+    const remote = deviceId !== null && deviceId !== localDevice
+    const startTs = Number(r.start_ts)
+    const endTs = Number(r.end_ts)
     return {
       id: Number(r.id),
       batchId: r.batch_id == null ? null : Number(r.batch_id),
-      startTs: Number(r.start_ts),
-      endTs: Number(r.end_ts),
-      startTime: String(r.start),
-      endTime: String(r.end),
-      day: String(r.day),
+      startTs,
+      endTs,
+      startTime: remote ? formatClock(startTs) : String(r.start),
+      endTime: remote ? formatClock(endTs) : String(r.end),
+      day: remote ? logicalDay(startTs) : String(r.day),
       title: String(r.title),
       summary: String(r.summary ?? ''),
       detailedSummary: String(r.detailed_summary ?? ''),
@@ -679,8 +686,9 @@ export class Store {
       isError: Boolean(meta.isError) || r.category === ERROR_CATEGORY,
       uuid: r.uuid == null ? undefined : String(r.uuid),
       deviceId,
-      remote: deviceId !== null && deviceId !== localDevice,
+      remote,
       private: meta.private === true,
+      detailProjects: meta.detailProjects,
     }
   }
 
@@ -901,7 +909,7 @@ export class Store {
    * A user edit of a card's user-editable fields (any device's card). Each changed field gets a
    * fresh HLC so concurrent edits on different devices merge per field.
    */
-  editCard(id: number, patch: { title?: string; category?: string; subcategory?: string; deleted?: boolean; private?: boolean }): void {
+  editCard(id: number, patch: { title?: string; category?: string; subcategory?: string; deleted?: boolean; private?: boolean; detailProjects?: Record<string, DetailProjectRef[]> }): void {
     this.transaction(() => {
       const r = this.db.prepare('SELECT * FROM timeline_cards WHERE id = ?').get(id) as Record<string, unknown> | undefined
       if (!r) return
@@ -928,6 +936,12 @@ export class Store {
         sets.push('metadata = ?')
         vals.push(JSON.stringify(meta))
         fh.private = h
+      }
+      if (patch.detailProjects !== undefined) {
+        meta.detailProjects = patch.detailProjects
+        if (!sets.includes('metadata = ?')) { sets.push('metadata = ?'); vals.push(JSON.stringify(meta)) }
+        else vals[sets.indexOf('metadata = ?')] = JSON.stringify(meta)
+        fh.detailProjects = h
       }
       if (sets.length === 0) return
       sets.push('field_hlc = ?')

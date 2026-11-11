@@ -48,7 +48,7 @@ export function deviceInfo(
 /** Creates or updates the user, applies the bootstrap-admin rule and registers a new device. */
 export async function signIn(
   ctx: Ctx,
-  p: { email: string; name: string; avatarUrl: string | null; googleSub: string | null; device: { name: string; platform: string; id?: string } },
+  p: { email: string; name: string; avatarUrl: string | null; googleSub: string | null; device: { name: string; platform: string; id?: string; reuse?: boolean } },
 ): Promise<AuthResponse> {
   const email = p.email.toLowerCase()
   if (!emailAllowed(ctx, email)) throw new HttpError(403, 'domain_not_allowed', 'this email domain is not allowed')
@@ -71,14 +71,22 @@ export async function signIn(
     const token = randomToken('dfd_')
     let d
     // A client-proposed device id is adopted when unused, or re-keyed when it is the caller's live device.
+    // `reuse` (web sign-in) keeps one live device per platform instead of adding a row per sign-in.
+    const reused = !p.device.id && p.device.reuse
+      ? (await tx.query<{ id: string }>(
+          `SELECT id FROM devices WHERE user_id = $1 AND platform = $2 AND revoked_at IS NULL
+           ORDER BY last_seen_at DESC NULLS LAST LIMIT 1 FOR UPDATE`,
+          [user.id, p.device.platform],
+        )).rows[0]?.id
+      : undefined
     const prev = p.device.id
       ? (await tx.query(`SELECT user_id, revoked_at FROM devices WHERE id = $1 FOR UPDATE`, [p.device.id])).rows[0]
       : undefined
-    if (p.device.id && prev && prev.user_id === user.id && !prev.revoked_at) {
+    if (reused || (p.device.id && prev && prev.user_id === user.id && !prev.revoked_at)) {
       d = await tx.query(
         `UPDATE devices SET token_hash = $2, name = $3, platform = $4, last_seen_at = now() WHERE id = $1
          RETURNING id, name, platform, last_seen_at, revoked_at`,
-        [p.device.id, sha256(token), p.device.name, p.device.platform],
+        [reused ?? p.device.id, sha256(token), p.device.name, p.device.platform],
       )
     } else {
       d = await tx.query(

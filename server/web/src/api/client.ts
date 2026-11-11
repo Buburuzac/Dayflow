@@ -114,12 +114,15 @@ function normProject(p: Project): Project {
 const enc = encodeURIComponent
 
 export const api = {
+  webAuthConfig: () => request<{ webClientId: string }>('GET', '/api/auth/google/config'),
+  webSignIn: (credential: string) => request<{ ok: boolean }>('POST', '/api/auth/google/web', { credential }),
   me: () => request<MeResponse>('GET', '/api/me'),
   logout: () => request<void>('POST', '/api/auth/logout'),
   revokeDevice: (id: string) => request<void>('DELETE', `/api/devices/${enc(id)}`),
 
   async timeline(from: string, to: string): Promise<TimelineResponse & { categories: Category[] }> {
-    const raw = await request<Partial<TimelineResponse> | TimelineCard[]>('GET', `/api/me/timeline?${qs({ from, to })}`)
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    const raw = await request<Partial<TimelineResponse> | TimelineCard[]>('GET', `/api/me/timeline?${qs({ from, to, timezone })}`)
     const cards = list<TimelineCard>(raw, 'cards').map((c) => ({ ...c, metadata: c.metadata ?? {}, projects: c.projects ?? [] }))
     const r = (Array.isArray(raw) ? {} : raw) as Partial<TimelineResponse>
     return { from, to, cards, devices: r.devices ?? [], categories: normalizeCategories(r.categories) }
@@ -133,7 +136,8 @@ export const api = {
     return { workspaceId, from, to, users: (r.users ?? []).map((u) => ({ ...u, devices: u.devices ?? [] })) }
   },
   async memberTimeline(workspaceId: string, userId: string, from: string, to: string): Promise<MemberTimelineResponse & { categories: Category[] }> {
-    const r = await request<MemberTimelineResponse>('GET', `/api/workspaces/${enc(workspaceId)}/members/${enc(userId)}/timeline?${qs({ from, to })}`)
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    const r = await request<MemberTimelineResponse>('GET', `/api/workspaces/${enc(workspaceId)}/members/${enc(userId)}/timeline?${qs({ from, to, timezone })}`)
     return {
       ...r,
       devices: r.devices ?? [],

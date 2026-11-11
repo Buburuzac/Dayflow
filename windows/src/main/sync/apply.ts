@@ -46,6 +46,18 @@ function cleanMetadata(m: unknown): Record<string, unknown> {
     out.appSites = { primary: a.primary ? str(a.primary, 200) : null, secondary: a.secondary ? str(a.secondary, 200) : null }
   }
   if (o.private === true) out.private = true
+  if (o.detailProjects && typeof o.detailProjects === 'object' && !Array.isArray(o.detailProjects)) {
+    out.detailProjects = Object.fromEntries(Object.entries(o.detailProjects as Record<string, unknown>)
+      .filter(([key, value]) => /^(detail|distraction):\d{1,4}$/.test(key) && Array.isArray(value))
+      .slice(0, 1000)
+      .map(([key, value]) => [key, (value as unknown[]).filter((ref) => ref && typeof ref === 'object')
+        .slice(0, 20).map((ref) => {
+          const p = ref as Record<string, unknown>
+          return { projectId: str(p.projectId, 100), share: Math.max(0, Math.min(1, finite(p.share) ?? 0)),
+            source: p.source === 'rule' || p.source === 'llm' ? p.source : 'manual',
+            confidence: Math.max(0, Math.min(1, finite(p.confidence) ?? 1)), confirmed: p.confirmed === true }
+        })]))
+  }
   if (Array.isArray(o.windowApps)) out.windowApps = o.windowApps.filter((x) => typeof x === 'string').slice(0, 20)
   return out
 }
@@ -227,6 +239,13 @@ export class RemoteApplier {
         }
         fh.private = remoteField('private')
       }
+      if (remoteField('detailProjects') > localField('detailProjects')) {
+        const detailProjects = cleanMetadata(md).detailProjects
+        if (detailProjects) meta.detailProjects = detailProjects
+        else delete meta.detailProjects
+        metaChanged = true
+        fh.detailProjects = remoteField('detailProjects')
+      }
     }
     if (remoteField('deleted') > localField('deleted')) {
       const del = c.deleted ? 1 : 0
@@ -318,6 +337,8 @@ export class RemoteApplier {
       workspaceId: str(d.workspaceId, 100) || cur?.workspaceId || '',
       name: str(d.name, 200) || cur?.name || 'Project',
       color: HEX_COLOR.test(str(d.color)) ? str(d.color) : (cur?.color ?? '#7BC47F'),
+      // An empty icon is a deliberate removal; only a missing field keeps the local one.
+      icon: typeof d.icon === 'string' ? str(d.icon, 16) : (cur?.icon ?? ''),
       description: str(d.description, 2000),
       rules: c.data
         ? { apps: list(rules.apps), domains: list(rules.domains), titleKeywords: list(rules.titleKeywords), repos: list(rules.repos) }

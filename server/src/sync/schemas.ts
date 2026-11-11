@@ -80,6 +80,7 @@ export const ProjectDataZ = z.object({
   workspaceId: Uuid,
   name: z.string().min(1).max(200),
   color: z.string().max(32).default(''),
+  icon: z.string().max(16).optional(),
   description: z.string().max(5_000).default(''),
   rules: ProjectRulesZ.default({}),
   defaultShare: ShareLevelZ.default('time'),

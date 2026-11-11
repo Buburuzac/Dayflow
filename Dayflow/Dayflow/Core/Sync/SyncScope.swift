@@ -102,10 +102,12 @@ func cardScope(category: String, isPrivate: Bool, hasConfirmedLiveProject: Bool,
 func redactCardData(_ data: [String: JSONValue], scope: CardScope) -> [String: JSONValue] {
   if scope == .full { return data }
   var d = data
-  d["title"] = .string(OUT_OF_SCOPE_LABEL)
+  let idle = data["category"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "idle"
+  let label = idle ? "Idle" : OUT_OF_SCOPE_LABEL
+  d["title"] = .string(label)
   d["summary"] = .string("")
   d["detailedSummary"] = .string("")
-  d["category"] = .string(OUT_OF_SCOPE_LABEL)
+  d["category"] = .string(label)
   d["subcategory"] = .string("")
   // The private flag stays (always a boolean), so the server's private field stays accurate.
   let isPrivate = d["metadata"]?.objectValue?["private"]?.boolValue == true

@@ -70,6 +70,7 @@ CREATE TABLE projects (
   workspace_id  uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   name          text NOT NULL,
   color         text NOT NULL DEFAULT '',
+  icon          text NOT NULL DEFAULT '',
   description   text NOT NULL DEFAULT '',
   rules         jsonb NOT NULL DEFAULT '{}'::jsonb,
   default_share text NOT NULL DEFAULT 'time' CHECK (default_share IN ('time','cards','detailed')),
