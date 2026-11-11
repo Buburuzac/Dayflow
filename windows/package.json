@@ -1,8 +1,8 @@
 {
   "name": "dayflow-windows",
   "productName": "Dayflow",
-  "version": "0.1.0",
-  "description": "Dayflow for Windows \u2014 a private, automatic work journal",
+  "version": "0.1.1",
+  "description": "Dayflow for Windows — a private, automatic work journal",
   "main": "./out/main/index.js",
   "author": "Dayflow Windows port",
   "license": "MIT",
