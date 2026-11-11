@@ -2,6 +2,7 @@
 *
 !server
 !windows/src/shared/sync-types.ts
+!windows/src/shared/detailed.ts
 **/node_modules
 **/dist
 **/.env
